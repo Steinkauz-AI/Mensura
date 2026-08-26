@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+workspaces/
+*.log
+opencode.json
+.env
+.env.*
+!.env.example
+/.turbo
+/.agents
+/.scratch
+/.mensura
+/docs/agents
+AGENTS.md
+CONTEXT.md
+skills-lock.json

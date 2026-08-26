@@ -1,0 +1,69 @@
+{
+  "name": "mensura",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mensura — deterministic code-quality metrics CLI and engine",
+  "license": "MIT",
+  "author": "Steinkauz AI",
+  "homepage": "https://github.com/Steinkauz-AI/Mensura#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Steinkauz-AI/Mensura.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Steinkauz-AI/Mensura/issues"
+  },
+  "keywords": [
+    "cli",
+    "code-quality",
+    "complexity",
+    "metrics",
+    "agentic-development",
+    "typescript",
+    "javascript"
+  ],
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "mensura": "bin/mensura.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ci": "pnpm run typecheck && pnpm test && pnpm build",
+    "mensura": "tsx src/cli/index.ts",
+    "mensura:link": "node scripts/mensura-link.mjs link",
+    "mensura:unlink": "node scripts/mensura-link.mjs unlink"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "ink": "6.8.0",
+    "react": "19.2.8",
+    "typescript": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.2.18",
+    "@vitest/coverage-v8": "^3.0.9",
+    "tsx": "^4.19.3",
+    "vitest": "^3.0.9"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
