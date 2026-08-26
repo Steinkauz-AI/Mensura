@@ -17,29 +17,38 @@ export function visibilityOf(graph: ImportGraph): Visibility {
     byPath.set(nodes[0]!, 0);
     return { cost: 0, byPath };
   }
+  const adj = adjacencyOf(graph, nodes);
+  let pairs = 0;
+  for (const start of nodes) {
+    const reachable = reachableCount(start, adj) - 1;
+    pairs += reachable;
+    byPath.set(start, percent(reachable, n - 1));
+  }
+  return { cost: percent(pairs, n * (n - 1)), byPath };
+}
+
+function adjacencyOf(graph: ImportGraph, nodes: string[]): Map<string, string[]> {
   const adj = new Map<string, string[]>();
   for (const path of nodes) adj.set(path, []);
   for (const edge of graph.edges) {
     adj.get(edge.from)?.push(edge.to);
   }
-  let pairs = 0;
-  for (const start of nodes) {
-    const seen = new Set<string>();
-    const queue = [start];
-    seen.add(start);
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      for (const next of adj.get(cur) ?? []) {
-        if (seen.has(next)) continue;
-        seen.add(next);
-        queue.push(next);
-      }
+  return adj;
+}
+
+function reachableCount(start: string, adj: Map<string, string[]>): number {
+  const seen = new Set<string>();
+  const queue = [start];
+  seen.add(start);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const next of adj.get(cur) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
     }
-    const reachable = seen.size - 1;
-    pairs += reachable;
-    byPath.set(start, percent(reachable, n - 1));
   }
-  return { cost: percent(pairs, n * (n - 1)), byPath };
+  return seen.size;
 }
 
 function percent(num: number, den: number): number {

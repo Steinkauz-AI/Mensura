@@ -52,8 +52,19 @@ export async function saveSnapshot<TReport>(
 ): Promise<SavedSnapshot<TReport>> {
   const dir = snapshotDirectory(store.root, store.metric);
   await mkdir(dir, { recursive: true });
+  const snapshot = buildSnapshot(store, report, inputsHash);
+  const path = await writeSnapshotFile(dir, snapshot);
+  await updateManifest(dir, store.maxSnapshots ?? DEFAULT_MAX_SNAPSHOTS, basename(path), snapshot.timestamp);
+  return { path, snapshot };
+}
+
+function buildSnapshot<TReport>(
+  store: SnapshotStore,
+  report: TReport,
+  inputsHash?: string,
+): Snapshot<TReport> {
   const now = (store.now ?? (() => new Date()))();
-  const snapshot: Snapshot<TReport> = {
+  return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     metric: store.metric,
     root: store.root,
@@ -61,18 +72,22 @@ export async function saveSnapshot<TReport>(
     ...(inputsHash !== undefined ? { inputsHash } : {}),
     report,
   };
-  const path = await writeSnapshotFile(dir, snapshot);
-  const max = store.maxSnapshots ?? DEFAULT_MAX_SNAPSHOTS;
-  const manifest = [...(await readManifest(dir)), { file: basename(path), timestamp: snapshot.timestamp }];
+}
+
+async function updateManifest(
+  dir: string,
+  max: number,
+  file: string,
+  timestamp: string,
+): Promise<void> {
+  const manifest = [...(await readManifest(dir)), { file, timestamp }];
   manifest.sort(byOldest);
   const overflow = Math.max(0, manifest.length - max);
-  const evicted = manifest.slice(0, overflow);
-  const kept = manifest.slice(overflow);
-  for (const meta of evicted) {
+  for (const meta of manifest.slice(0, overflow)) {
     await rm(join(dir, meta.file), { force: true });
   }
+  const kept = manifest.slice(overflow);
   await writeAtomic(join(dir, MANIFEST_FILE), `${JSON.stringify(kept.reverse(), null, 2)}\n`);
-  return { path, snapshot };
 }
 
 
@@ -109,24 +124,29 @@ export async function loadSnapshot<TReport = unknown>(
 ): Promise<SavedSnapshot<TReport>> {
   const dir = snapshotDirectory(store.root, store.metric);
   const manifest = (await readManifest(dir)).sort(byNewest);
-  const file =
-    ref === "latest"
-      ? manifest[0]?.file
-      : ref === "previous"
-        ? manifest[1]?.file
-        : manifest.find((meta) => meta.file === ref || meta.timestamp === ref)?.file;
+  const file = resolveSnapshotFile(manifest, ref);
   if (!file) {
     throw new Error(`No snapshot "${ref}" for metric "${store.metric}" in ${dir}`);
   }
   const path = join(dir, file);
   const snapshot = JSON.parse(await readFile(path, "utf8")) as Snapshot<TReport>;
+  validateSnapshot(snapshot, path, store.metric);
+  return { path, snapshot };
+}
+
+function resolveSnapshotFile(manifest: SnapshotMeta[], ref: SnapshotRef): string | undefined {
+  if (ref === "latest") return manifest[0]?.file;
+  if (ref === "previous") return manifest[1]?.file;
+  return manifest.find((meta) => meta.file === ref || meta.timestamp === ref)?.file;
+}
+
+function validateSnapshot<TReport>(snapshot: Snapshot<TReport>, path: string, metric: string): void {
   if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     throw new Error(`${path}: unsupported schemaVersion ${String(snapshot.schemaVersion)}`);
   }
-  if (snapshot.metric !== store.metric) {
-    throw new Error(`${path}: metric "${snapshot.metric}" does not match "${store.metric}"`);
+  if (snapshot.metric !== metric) {
+    throw new Error(`${path}: metric "${snapshot.metric}" does not match "${metric}"`);
   }
-  return { path, snapshot };
 }
 
 async function writeSnapshotFile<TReport>(

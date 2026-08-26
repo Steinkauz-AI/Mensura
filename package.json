@@ -43,10 +43,10 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "ci": "pnpm run typecheck && pnpm test && pnpm build",
+    "ci": "pnpm run typecheck && pnpm build && pnpm test && node bin/mensura.mjs run --all --check",
     "mensura": "tsx src/cli/index.ts",
-    "mensura:link": "node scripts/mensura-link.mjs link",
-    "mensura:unlink": "node scripts/mensura-link.mjs unlink"
+    "mensura:link": "node --import tsx scripts/mensura-link.mjs link",
+    "mensura:unlink": "node --import tsx scripts/mensura-link.mjs unlink"
   },
   "dependencies": {
     "commander": "^15.0.0",
@@ -58,6 +58,7 @@
     "@types/node": "^22.13.10",
     "@types/react": "^19.2.18",
     "@vitest/coverage-v8": "^3.0.9",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.19.3",
     "vitest": "^3.0.9"
   },

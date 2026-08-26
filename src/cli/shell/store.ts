@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import {
   checkoutStatus,
+  ensureBuiltinMetrics,
   evaluateMetric,
   getMetric,
   hashMetricInputs,
@@ -19,6 +20,7 @@ import type { CatalogRow, InspectSnapshot } from "./session.js";
 type Output = { write(text: string): void; isTTY?: boolean };
 
 export async function loadCatalog(root: string): Promise<CatalogRow[]> {
+  await ensureBuiltinMetrics();
   const statusById = await statusMap(root);
   const rows: CatalogRow[] = [];
   for (const metric of listMetrics()) {
@@ -56,6 +58,7 @@ export async function showSnapshot(
   stdout: Output,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
+  await ensureBuiltinMetrics();
   const metric = getMetric(metricId);
   if (!metric) throw new Error(`Unknown metric "${metricId}"`);
   const config = await loadMensuraConfigOrDefault(root);
@@ -82,6 +85,7 @@ export async function diffSnapshots(
   stdout: Output,
   env: NodeJS.ProcessEnv,
 ): Promise<string> {
+  await ensureBuiltinMetrics();
   const metric = getMetric(metricId);
   if (!metric) throw new Error(`Unknown metric "${metricId}"`);
   const store = { root, metric: metricId };
@@ -101,6 +105,7 @@ export async function generateMetrics(
   root: string,
   ids: string[],
 ): Promise<{ rows: CatalogRow[]; errors: Record<string, string> }> {
+  await ensureBuiltinMetrics();
   const errors: Record<string, string> = {};
   for (const id of ids) {
     const metric = getMetric(id);

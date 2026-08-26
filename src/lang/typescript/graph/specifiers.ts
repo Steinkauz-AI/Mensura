@@ -8,41 +8,51 @@ export type ImportSpecifier = {
 
 export function specifiersInFile(source: ts.SourceFile): ImportSpecifier[] {
   const out: ImportSpecifier[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      out.push({
-        specifier: node.moduleSpecifier.text,
-        typeOnly: Boolean(node.importClause?.isTypeOnly),
-      });
-    } else if (
-      ts.isExportDeclaration(node) &&
-      node.moduleSpecifier &&
-      ts.isStringLiteral(node.moduleSpecifier)
-    ) {
-      out.push({
-        specifier: node.moduleSpecifier.text,
-        typeOnly: Boolean(node.isTypeOnly),
-      });
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference) &&
-      node.moduleReference.expression &&
-      ts.isStringLiteral(node.moduleReference.expression)
-    ) {
-      out.push({
-        specifier: node.moduleReference.expression.text,
-        typeOnly: false,
-      });
-    } else if (ts.isCallExpression(node)) {
-      const literal = stringArg(node);
-      if (literal && isRequireOrImport(node)) {
-        out.push({ specifier: literal, typeOnly: false });
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  collectSpecifiers(source, out);
   return out;
+}
+
+function collectSpecifiers(node: ts.Node, out: ImportSpecifier[]): void {
+  const specifier = specifierFromNode(node);
+  if (specifier) out.push(specifier);
+  ts.forEachChild(node, (child) => collectSpecifiers(child, out));
+}
+
+function specifierFromNode(node: ts.Node): ImportSpecifier | undefined {
+  if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+    return {
+      specifier: node.moduleSpecifier.text,
+      typeOnly: Boolean(node.importClause?.isTypeOnly),
+    };
+  }
+  if (
+    ts.isExportDeclaration(node) &&
+    node.moduleSpecifier &&
+    ts.isStringLiteral(node.moduleSpecifier)
+  ) {
+    return {
+      specifier: node.moduleSpecifier.text,
+      typeOnly: Boolean(node.isTypeOnly),
+    };
+  }
+  if (
+    ts.isImportEqualsDeclaration(node) &&
+    ts.isExternalModuleReference(node.moduleReference) &&
+    node.moduleReference.expression &&
+    ts.isStringLiteral(node.moduleReference.expression)
+  ) {
+    return {
+      specifier: node.moduleReference.expression.text,
+      typeOnly: false,
+    };
+  }
+  if (ts.isCallExpression(node)) {
+    const literal = stringArg(node);
+    if (literal && isRequireOrImport(node)) {
+      return { specifier: literal, typeOnly: false };
+    }
+  }
+  return undefined;
 }
 
 function isRequireOrImport(node: ts.CallExpression): boolean {

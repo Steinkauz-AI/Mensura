@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { listMetrics } from "../../src/index.js";
+import { ensureBuiltinMetrics, listMetrics } from "../../src/index.js";
 import { completionScript } from "../../src/cli/completion.js";
+
+await ensureBuiltinMetrics();
 
 const COMMANDS = ["list", "run", "snapshot", "completion"];
 const METRIC_IDS = listMetrics().map((metric) => metric.id);
@@ -162,5 +164,14 @@ describe("completionScript consistency across shells", () => {
     expect(offersWordList(completionScript("bash"), REFS)).toBe(true);
     expect(sameWords(zshValues(completionScript("zsh"), "ref"), REFS)).toBe(true);
     expect(offersWordList(completionScript("fish"), REFS)).toBe(true);
+  });
+
+  it("throws when no metrics are registered", async () => {
+    const { clearMetrics } = await import("../../src/index.js");
+    clearMetrics();
+    expect(() => completionScript("bash")).toThrow(
+      /no metrics registered.*ensureBuiltinMetrics/i,
+    );
+    await ensureBuiltinMetrics();
   });
 });

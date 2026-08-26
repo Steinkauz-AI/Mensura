@@ -1,7 +1,7 @@
 import { complexityOf } from "../../lang/typescript/scoring/cyclomatic.js";
 import { loadCoverageStatementMaps } from "../test-coverage/load.js";
 import { coveragePercent } from "../test-coverage/score.js";
-import { isTestSourcePath } from "../test-coverage/test-files.js";
+import { isTestSourcePath } from "../../lang/typescript/source/test-path.js";
 import { analyzeFunctionScores } from "../../lang/typescript/source/index.js";
 import type { ComplexityReport, ComplexityUnit, FileComplexity } from "../../lang/typescript/source/index.js";
 import { crapScore } from "./score.js";

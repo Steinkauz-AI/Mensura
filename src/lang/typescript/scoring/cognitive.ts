@@ -1,109 +1,149 @@
 import ts from "typescript";
 import { isFunctionLike, unitName } from "../source/index.js";
+import { isElseIf } from "./else-if.js";
 
 const LOGICAL_OPS = new Set([
   ts.SyntaxKind.AmpersandAmpersandToken,
   ts.SyntaxKind.BarBarToken,
 ]);
 
+type CognitiveCtx = {
+  visit: (node: ts.Node, nest: number) => void;
+  add: (points: number) => void;
+  ownName: string;
+  markRecursive: () => boolean;
+};
+
+type Handler = (node: ts.Node, nest: number, ctx: CognitiveCtx) => void;
 
 export function cognitiveOf(fn: ts.Node): number {
   const ownName = unitName(fn);
   let score = 0;
   let recursive = false;
 
-  const visit = (node: ts.Node, nest: number): void => {
-    if (node !== fn && isFunctionLike(node)) return;
-
-    if (ts.isIfStatement(node)) {
-      if (isElseIf(node)) {
-        score += 1;
-      } else {
-        score += 1 + nest;
-      }
-      visit(node.expression, nest);
-      visit(node.thenStatement, nest + 1);
-      if (node.elseStatement) {
-        if (ts.isIfStatement(node.elseStatement)) {
-          visit(node.elseStatement, nest);
-        } else {
-          score += 1;
-          visit(node.elseStatement, nest + 1);
-        }
-      }
-      return;
-    }
-    if (ts.isForStatement(node)) {
-      score += 1 + nest;
-      if (node.initializer) visit(node.initializer, nest);
-      if (node.condition) visit(node.condition, nest);
-      if (node.incrementor) visit(node.incrementor, nest);
-      visit(node.statement, nest + 1);
-      return;
-    }
-    if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-      score += 1 + nest;
-      visit(node.initializer, nest);
-      visit(node.expression, nest);
-      visit(node.statement, nest + 1);
-      return;
-    }
-    if (ts.isWhileStatement(node)) {
-      score += 1 + nest;
-      visit(node.expression, nest);
-      visit(node.statement, nest + 1);
-      return;
-    }
-    if (ts.isDoStatement(node)) {
-      score += 1 + nest;
-      visit(node.statement, nest + 1);
-      visit(node.expression, nest);
-      return;
-    }
-    if (ts.isSwitchStatement(node)) {
-      score += 1 + nest;
-      visit(node.expression, nest);
-      for (const clause of node.caseBlock.clauses) {
-        visit(clause, nest + 1);
-      }
-      return;
-    }
-    if (ts.isCatchClause(node)) {
-      score += 1 + nest;
-      if (node.variableDeclaration) visit(node.variableDeclaration, nest);
-      visit(node.block, nest + 1);
-      return;
-    }
-    if (ts.isConditionalExpression(node)) {
-      score += 1 + nest;
-      visit(node.condition, nest);
-      visit(node.whenTrue, nest + 1);
-      visit(node.whenFalse, nest + 1);
-      return;
-    }
-    if (isLogical(node) && isLogicalRoot(node)) {
-      score += logicalSequences(node);
-    }
-    if (
-      (ts.isBreakStatement(node) || ts.isContinueStatement(node)) &&
-      node.label
-    ) {
-      score += 1;
-    }
-    if (!recursive && isDirectRecursion(node, ownName)) {
+  const ctx: CognitiveCtx = {
+    ownName,
+    add: (points) => {
+      score += points;
+    },
+    markRecursive: () => {
+      if (recursive) return false;
       recursive = true;
-      score += 1;
-    }
-    ts.forEachChild(node, (child) => visit(child, nest));
+      return true;
+    },
+    visit: (node, nest) => visitNode(fn, node, nest, ctx),
   };
 
-  visit(fn, 0);
+  ctx.visit(fn, 0);
   return score;
 }
 
-function isElseIf(node: ts.IfStatement): boolean {
-  const parent = node.parent;
-  return ts.isIfStatement(parent) && parent.elseStatement === node;
+function visitNode(
+  fn: ts.Node,
+  node: ts.Node,
+  nest: number,
+  ctx: CognitiveCtx,
+): void {
+  if (node !== fn && isFunctionLike(node)) return;
+  const handler = HANDLERS[node.kind];
+  if (handler) {
+    handler(node, nest, ctx);
+    return;
+  }
+  applyFlatIncrements(node, ctx);
+  ts.forEachChild(node, (child) => ctx.visit(child, nest));
+}
+
+function applyFlatIncrements(node: ts.Node, ctx: CognitiveCtx): void {
+  if (isLogical(node) && isLogicalRoot(node)) {
+    ctx.add(logicalSequences(node));
+  }
+  if (
+    (ts.isBreakStatement(node) || ts.isContinueStatement(node)) &&
+    node.label
+  ) {
+    ctx.add(1);
+  }
+  if (isDirectRecursion(node, ctx.ownName) && ctx.markRecursive()) {
+    ctx.add(1);
+  }
+}
+
+function visitIf(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.IfStatement;
+  ctx.add(isElseIf(stmt) ? 1 : 1 + nest);
+  ctx.visit(stmt.expression, nest);
+  ctx.visit(stmt.thenStatement, nest + 1);
+  visitElseBranch(stmt.elseStatement, nest, ctx);
+}
+
+function visitElseBranch(
+  elseStatement: ts.Statement | undefined,
+  nest: number,
+  ctx: CognitiveCtx,
+): void {
+  if (!elseStatement) return;
+  if (ts.isIfStatement(elseStatement)) {
+    ctx.visit(elseStatement, nest);
+    return;
+  }
+  ctx.add(1);
+  ctx.visit(elseStatement, nest + 1);
+}
+
+function visitFor(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.ForStatement;
+  ctx.add(1 + nest);
+  if (stmt.initializer) ctx.visit(stmt.initializer, nest);
+  if (stmt.condition) ctx.visit(stmt.condition, nest);
+  if (stmt.incrementor) ctx.visit(stmt.incrementor, nest);
+  ctx.visit(stmt.statement, nest + 1);
+}
+
+function visitForInOrOf(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.ForInStatement | ts.ForOfStatement;
+  ctx.add(1 + nest);
+  ctx.visit(stmt.initializer, nest);
+  ctx.visit(stmt.expression, nest);
+  ctx.visit(stmt.statement, nest + 1);
+}
+
+function visitWhile(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.WhileStatement;
+  ctx.add(1 + nest);
+  ctx.visit(stmt.expression, nest);
+  ctx.visit(stmt.statement, nest + 1);
+}
+
+function visitDo(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.DoStatement;
+  ctx.add(1 + nest);
+  ctx.visit(stmt.statement, nest + 1);
+  ctx.visit(stmt.expression, nest);
+}
+
+function visitSwitch(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const stmt = node as ts.SwitchStatement;
+  ctx.add(1 + nest);
+  ctx.visit(stmt.expression, nest);
+  for (const clause of stmt.caseBlock.clauses) {
+    ctx.visit(clause, nest + 1);
+  }
+}
+
+function visitCatch(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const clause = node as ts.CatchClause;
+  ctx.add(1 + nest);
+  if (clause.variableDeclaration) ctx.visit(clause.variableDeclaration, nest);
+  ctx.visit(clause.block, nest + 1);
+}
+
+function visitConditional(node: ts.Node, nest: number, ctx: CognitiveCtx): void {
+  const expr = node as ts.ConditionalExpression;
+  ctx.add(1 + nest);
+  ctx.visit(expr.condition, nest);
+  ctx.visit(expr.whenTrue, nest + 1);
+  ctx.visit(expr.whenFalse, nest + 1);
 }
 
 function isLogical(node: ts.Node): node is ts.BinaryExpression {
@@ -124,19 +164,7 @@ function isInsideLogicalChain(node: ts.Node): boolean {
 
 function logicalSequences(node: ts.BinaryExpression): number {
   const ops: ts.SyntaxKind[] = [];
-  const collect = (n: ts.Node): void => {
-    if (ts.isParenthesizedExpression(n)) {
-      collect(n.expression);
-      return;
-    }
-    if (isLogical(n)) {
-      collect(n.left);
-      ops.push(n.operatorToken.kind);
-      collect(n.right);
-      return;
-    }
-  };
-  collect(node);
+  collectLogicalOps(node, ops);
   let sequences = 0;
   let prev: ts.SyntaxKind | undefined;
   for (const op of ops) {
@@ -146,6 +174,18 @@ function logicalSequences(node: ts.BinaryExpression): number {
     }
   }
   return sequences;
+}
+
+function collectLogicalOps(n: ts.Node, ops: ts.SyntaxKind[]): void {
+  if (ts.isParenthesizedExpression(n)) {
+    collectLogicalOps(n.expression, ops);
+    return;
+  }
+  if (isLogical(n)) {
+    collectLogicalOps(n.left, ops);
+    ops.push(n.operatorToken.kind);
+    collectLogicalOps(n.right, ops);
+  }
 }
 
 function isDirectRecursion(node: ts.Node, ownName: string): boolean {
@@ -159,3 +199,15 @@ function isDirectRecursion(node: ts.Node, ownName: string): boolean {
     expr.name.text === ownName
   );
 }
+
+const HANDLERS: Partial<Record<ts.SyntaxKind, Handler>> = {
+  [ts.SyntaxKind.IfStatement]: visitIf,
+  [ts.SyntaxKind.ForStatement]: visitFor,
+  [ts.SyntaxKind.ForInStatement]: visitForInOrOf,
+  [ts.SyntaxKind.ForOfStatement]: visitForInOrOf,
+  [ts.SyntaxKind.WhileStatement]: visitWhile,
+  [ts.SyntaxKind.DoStatement]: visitDo,
+  [ts.SyntaxKind.SwitchStatement]: visitSwitch,
+  [ts.SyntaxKind.CatchClause]: visitCatch,
+  [ts.SyntaxKind.ConditionalExpression]: visitConditional,
+};

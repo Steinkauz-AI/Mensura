@@ -18,6 +18,9 @@ import {
   PROPAGATION_SCALE,
   selectComplexity,
   summaryOf,
+  checkDefaultMax,
+  checkDefaultMin,
+  sortUnitsByHeat,
 } from "../../src/cli/format/index.js";
 import { formatRunAllDashboard, batchSummary, emptySummary, formatThresholdLabel, thresholdViolationCount } from "../../src/cli/format/run-all.js";
 
@@ -60,6 +63,98 @@ const report: ComplexityReport = {
 };
 
 const at = new Date("2026-08-20T10:00:00.000Z");
+
+function halsteadSampleReport(): ComplexityReport {
+  return {
+    units: [
+      unit("src/a.ts", "wide", 80, 1, { difficulty: 2, effort: 160 }),
+      unit("src/a.ts", "dense", 40, 2, { difficulty: 10, effort: 400 }),
+    ],
+    files: [{ path: "src/a.ts", functionCount: 2, minComplexity: 40, maxComplexity: 80, sumComplexity: 120 }],
+    unparsed: [],
+  };
+}
+
+function crapSampleReport(): ComplexityReport {
+  return {
+    units: [
+      unit("src/a.ts", "risky", 30, 1, { cyclomatic: 5, coverage: 0 }),
+      unit("src/a.ts", "safe", 1, 2, { cyclomatic: 1, coverage: 100 }),
+    ],
+    files: [
+      { path: "src/a.ts", functionCount: 2, minComplexity: 1, maxComplexity: 30, sumComplexity: 31 },
+    ],
+    unparsed: [],
+  };
+}
+
+function couplingSampleReport(): ComplexityReport {
+  return {
+    units: [
+      {
+        path: "src/a.ts",
+        name: "src/a.ts",
+        kind: "file",
+        startLine: 1,
+        endLine: 10,
+        complexity: 2,
+        ca: 0,
+        ce: 2,
+        instability: 1,
+      },
+      {
+        path: "src/b.ts",
+        name: "src/b.ts",
+        kind: "file",
+        startLine: 1,
+        endLine: 4,
+        complexity: 0,
+        ca: 1,
+        ce: 0,
+        instability: 0,
+      },
+    ],
+    files: [
+      { path: "src/a.ts", functionCount: 1, minComplexity: 2, maxComplexity: 2, sumComplexity: 2 },
+      { path: "src/b.ts", functionCount: 1, minComplexity: 0, maxComplexity: 0, sumComplexity: 0 },
+    ],
+    unparsed: [],
+  };
+}
+
+function maintainabilitySortReport(): ComplexityReport {
+  return {
+    units: [
+      unit("src/a.ts", "healthy", 90, 1, { volume: 12, cyclomatic: 1, loc: 1 }),
+      unit("src/a.ts", "frail", 40, 2, { volume: 80, cyclomatic: 6, loc: 20 }),
+    ],
+    files: [
+      { path: "src/a.ts", functionCount: 2, minComplexity: 40, maxComplexity: 90, sumComplexity: 130 },
+    ],
+    unparsed: [],
+  };
+}
+
+const DASHBOARD_SAMPLE_ROWS = [
+  {
+    id: "cyclomatic-complexity",
+    name: "Cyclomatic complexity",
+    status: "pass" as const,
+    violationCount: 1,
+    summary: { functions: 2, files: 2, min: 1, mean: 13.5, median: 13.5, max: 26 },
+    error: null,
+    threshold: "<=20",
+  },
+  {
+    id: "test-coverage",
+    name: "Test coverage",
+    status: "error" as const,
+    violationCount: 0,
+    summary: { functions: 0, files: 0, min: null, mean: null, median: null, max: null },
+    error: "spawn npm ENOENT",
+    threshold: ">=50",
+  },
+];
 
 describe("formatComplexityView", () => {
   it("prints the overview with summary stats and hottest units", () => {
@@ -118,19 +213,12 @@ describe("formatComplexityView", () => {
   });
 
   it("prints Halstead volume/difficulty/effort columns and sorts by effort", () => {
-    const halsteadReport: ComplexityReport = {
-      units: [
-        unit("src/a.ts", "wide", 80, 1, { difficulty: 2, effort: 160 }),
-        unit("src/a.ts", "dense", 40, 2, { difficulty: 10, effort: 400 }),
-      ],
-      files: [{ path: "src/a.ts", functionCount: 2, minComplexity: 40, maxComplexity: 80, sumComplexity: 120 }],
-      unparsed: [],
-    };
-    const text = formatComplexityView(halsteadReport, {
+    const text = formatComplexityView(halsteadSampleReport(), {
       root: "/r",
       at,
       color: false,
       title: "Halstead",
+      metric: "halstead",
       scale: HALSTEAD_VOLUME_SCALE,
     });
     expect(text).toContain("Halstead");
@@ -344,22 +432,7 @@ describe("selectComplexity and summaryOf", () => {
   });
 
   it("sorts higher-better units lowest-index first", () => {
-    const miReport: ComplexityReport = {
-      units: [
-        unit("src/a.ts", "healthy", 90, 1, { volume: 12, cyclomatic: 1, loc: 1 }),
-        unit("src/a.ts", "frail", 40, 2, { volume: 80, cyclomatic: 6, loc: 20 }),
-      ],
-      files: [
-        {
-          path: "src/a.ts",
-          functionCount: 2,
-          minComplexity: 40,
-          maxComplexity: 90,
-          sumComplexity: 130,
-        },
-      ],
-      unparsed: [],
-    };
+    const miReport = maintainabilitySortReport();
     const selected = selectComplexity(miReport, {
       top: 10,
       scale: MAINTAINABILITY_SCALE,
@@ -371,6 +444,7 @@ describe("selectComplexity and summaryOf", () => {
       at,
       color: false,
       title: "Maintainability index",
+      metric: "maintainability-index",
       scale: MAINTAINABILITY_SCALE,
       direction: "higher-better",
     });
@@ -384,27 +458,12 @@ describe("selectComplexity and summaryOf", () => {
   });
 
   it("prints CRAP columns for cyclomatic and coverage beside the score", () => {
-    const crapReport: ComplexityReport = {
-      units: [
-        unit("src/a.ts", "risky", 30, 1, { cyclomatic: 5, coverage: 0 }),
-        unit("src/a.ts", "safe", 1, 2, { cyclomatic: 1, coverage: 100 }),
-      ],
-      files: [
-        {
-          path: "src/a.ts",
-          functionCount: 2,
-          minComplexity: 1,
-          maxComplexity: 30,
-          sumComplexity: 31,
-        },
-      ],
-      unparsed: [],
-    };
-    const text = formatComplexityView(crapReport, {
+    const text = formatComplexityView(crapSampleReport(), {
       root: "/r",
       at,
       color: false,
       title: "CRAP",
+      metric: "crap",
       scale: CRAP_SCALE,
       direction: "higher-worse",
     });
@@ -417,42 +476,12 @@ describe("selectComplexity and summaryOf", () => {
   });
 
   it("prints coupling Ce/Ca/I columns under a Files heading", () => {
-    const couplingReport: ComplexityReport = {
-      units: [
-        {
-          path: "src/a.ts",
-          name: "src/a.ts",
-          kind: "file",
-          startLine: 1,
-          endLine: 10,
-          complexity: 2,
-          ca: 0,
-          ce: 2,
-          instability: 1,
-        },
-        {
-          path: "src/b.ts",
-          name: "src/b.ts",
-          kind: "file",
-          startLine: 1,
-          endLine: 4,
-          complexity: 0,
-          ca: 1,
-          ce: 0,
-          instability: 0,
-        },
-      ],
-      files: [
-        { path: "src/a.ts", functionCount: 1, minComplexity: 2, maxComplexity: 2, sumComplexity: 2 },
-        { path: "src/b.ts", functionCount: 1, minComplexity: 0, maxComplexity: 0, sumComplexity: 0 },
-      ],
-      unparsed: [],
-    };
-    const text = formatComplexityView(couplingReport, {
+    const text = formatComplexityView(couplingSampleReport(), {
       root: "/r",
       at,
       color: false,
       title: "Coupling",
+      metric: "coupling",
       scale: COUPLING_SCALE,
     });
     expect(text).toContain("ce");
@@ -541,30 +570,7 @@ describe("formatCheck", () => {
 
 describe("formatRunAllDashboard", () => {
   it("orders columns as metric, status, errors, stats, threshold, threshold violations", () => {
-    const text = formatRunAllDashboard(
-      "/repo",
-      [
-        {
-          id: "cyclomatic-complexity",
-          name: "Cyclomatic complexity",
-          status: "pass",
-          violationCount: 1,
-          summary: { functions: 2, files: 2, min: 1, mean: 13.5, median: 13.5, max: 26 },
-          error: null,
-          threshold: "<=20",
-        },
-        {
-          id: "test-coverage",
-          name: "Test coverage",
-          status: "error",
-          violationCount: 0,
-          summary: { functions: 0, files: 0, min: null, mean: null, median: null, max: null },
-          error: "spawn npm ENOENT",
-          threshold: ">=50",
-        },
-      ],
-      { passed: 1, failed: 0, errors: 1 },
-    );
+    const text = formatRunAllDashboard("/repo", DASHBOARD_SAMPLE_ROWS, { passed: 1, failed: 0, errors: 1 });
     const header = text.split("\n").find((line) => line.startsWith("metric"));
     expect(header?.replace(/\s+/g, " ")).toBe(
       "metric status errors functions files min mean median max threshold threshold violations",
@@ -668,5 +674,43 @@ describe("formatMetricList", () => {
     expect(formatStatusRollup({ upToDate: 3, outdated: 2, missing: 4 })).toBe(
       "3 up-to-date, 2 outdated, 4 missing",
     );
+  });
+});
+
+describe("check defaults", () => {
+  it("returns catalog thresholds for max and min gates", () => {
+    expect(checkDefaultMax("cyclomatic-complexity")).toBe(20);
+    expect(checkDefaultMin("maintainability-index")).toBe(20);
+    expect(checkDefaultMin("test-coverage")).toBe(50);
+    expect(checkDefaultMax("maintainability-index")).toBe(20);
+    expect(checkDefaultMin("cyclomatic-complexity")).toBe(0);
+  });
+});
+
+describe("sortUnitsByHeat", () => {
+  it("orders higher-worse units by complexity and tie-breakers", () => {
+    const units: ComplexityUnit[] = [
+      unit("src/b.ts", "b", 5, 1),
+      unit("src/a.ts", "z", 10, 1),
+      unit("src/a.ts", "a", 10, 2),
+      unit("src/a.ts", "a", 10, 1, { effort: 50 }),
+    ];
+    const sorted = sortUnitsByHeat(units, "higher-worse");
+    expect(sorted.map((u) => `${u.path}:${u.name}:${u.startLine}`)).toEqual([
+      "src/a.ts:a:1",
+      "src/a.ts:a:2",
+      "src/a.ts:z:1",
+      "src/b.ts:b:1",
+    ]);
+  });
+
+  it("orders higher-better units with lowest scores first", () => {
+    const units: ComplexityUnit[] = [
+      unit("src/a.ts", "low", 10, 1),
+      unit("src/a.ts", "high", 90, 2),
+    ];
+    const sorted = sortUnitsByHeat(units, "higher-better");
+    expect(sorted[0]!.name).toBe("low");
+    expect(sorted[1]!.name).toBe("high");
   });
 });

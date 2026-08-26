@@ -2,7 +2,7 @@ import { analyzeFunctionScores } from "../../lang/typescript/source/index.js";
 import type { ComplexityReport, ComplexityUnit, FileComplexity } from "../../lang/typescript/source/index.js";
 import { loadCoverageStatementMaps } from "./load.js";
 import { coveragePercent } from "./score.js";
-import { isTestSourcePath } from "./test-files.js";
+import { isTestSourcePath } from "../../lang/typescript/source/test-path.js";
 
 
 export async function analyzeCoverage(

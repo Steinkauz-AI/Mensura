@@ -2,7 +2,7 @@
 
 Each metric is one registry id under `src/metrics/<id>/`. Function-grain metrics score a function-like unit; structure-grain metrics score a source file on the checkout’s import graph. Primary score is always stored on `complexity`. The snapshot view always shows the configured threshold (`max` when higher is worse, `min` when higher is better; catalog values below are the defaults in `.mensura/config.json`). `mensura run --check` uses that same bar for exit 2.
 
-TypeScript/JavaScript only today. Shared function walk: `src/lang/typescript/source/`. Shared import graph: `src/lang/typescript/graph/`. Nested functions are their own units; the outer score does not include the inner body. Test files (`*.test.*` / `*.spec.*`) are omitted from coverage, CRAP, and the import graph.
+TypeScript/JavaScript only today. Shared function walk: `src/lang/typescript/source/`. Shared import graph: `src/lang/typescript/graph/`. Nested functions are their own units; the outer score does not include the inner body. Test files (`*.test.*` / `*.spec.*` on basename, or any path under a `tests` / `__tests__` directory) are omitted from coverage, CRAP, and the import graph.
 
 ## Function grain
 

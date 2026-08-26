@@ -104,12 +104,7 @@ function configureProgram(
   }
 }
 
-function createProgram(cwd: string, capture: Capture): Command {
-  const program = new Command()
-    .name("mensura")
-    .description("Mensura metrics CLI")
-    .allowExcessArguments(false);
-
+function registerList(program: Command, capture: Capture): void {
   program
     .command("list")
     .description("List registered metrics")
@@ -117,7 +112,9 @@ function createProgram(cwd: string, capture: Capture): Command {
     .action(() => {
       capture.command = { name: "list" };
     });
+}
 
+function registerRun(program: Command, capture: Capture, cwd: string): void {
   program
     .command("run [id] [root]")
     .description("Analyze a checkout, save a snapshot, print the overview")
@@ -136,19 +133,21 @@ function createProgram(cwd: string, capture: Capture): Command {
       }
       capture.command = buildMetricCommand("run", id, root, options, cwd);
     });
+}
 
+function registerSnapshot(program: Command, capture: Capture): void {
   const snapshot = program
     .command("snapshot")
     .description("Read persisted snapshot refs and diff");
 
   snapshot
-    .command("show [id] [ref]")
+    .command("show <id> <ref>")
     .description("View a saved snapshot (latest | previous | file name | timestamp)")
     .option("--top <n>", "Units to list", nonNegInt("--top"))
     .option("--min <n>", "Only list units with score >= N", nonNegInt("--min"))
     .option("--file <path>", "Restrict the listing to one checkout-relative file")
     .allowExcessArguments(false)
-    .action((id: string | undefined, ref: string | undefined, options: ShowOptions) => {
+    .action((id: string, ref: string, options: ShowOptions) => {
       capture.command = buildShowCommand(id, ref, options);
     });
 
@@ -161,7 +160,9 @@ function createProgram(cwd: string, capture: Capture): Command {
     .action((id: string | undefined, options: DiffOptions) => {
       capture.command = buildDiffCommand(id, options);
     });
+}
 
+function registerCompletion(program: Command, capture: Capture): void {
   program
     .command("completion [shell]")
     .description("Print a shell completion script (bash, zsh, or fish)")
@@ -169,7 +170,17 @@ function createProgram(cwd: string, capture: Capture): Command {
     .action((shell: string | undefined) => {
       capture.command = buildCompletionCommand(shell);
     });
+}
 
+function createProgram(cwd: string, capture: Capture): Command {
+  const program = new Command()
+    .name("mensura")
+    .description("Mensura metrics CLI")
+    .allowExcessArguments(false);
+  registerList(program, capture);
+  registerRun(program, capture, cwd);
+  registerSnapshot(program, capture);
+  registerCompletion(program, capture);
   configureProgram(program);
   return program;
 }
@@ -272,36 +283,57 @@ function parseInteractive(rest: string[]): MensuraCommand {
   throw new Error("Interactive mode does not accept a command. Use mensura -i alone.");
 }
 
+function matchGroup(message: string, pattern: RegExp, fallback: string): string {
+  return message.match(pattern)?.[1] ?? fallback;
+}
+
+function unknownCommandError(err: CommanderError): Error {
+  const unknown = matchGroup(err.message, /unknown command '([^']+)'/, "command");
+  return new Error(`Unknown command "${unknown}".\n\n${usage()}`);
+}
+
+function excessArgumentsError(err: CommanderError): Error {
+  const command = matchGroup(err.message, /error: too many arguments for '([^']+)'/, "command");
+  return new Error(`Too many arguments for "${command}".\n\n${usage()}`);
+}
+
+function missingArgumentError(err: CommanderError): Error | undefined {
+  const name = matchGroup(err.message, /error: missing required argument '([^']+)'/, "");
+  if (name === "ref") {
+    return new Error(
+      `"snapshot show" needs a snapshot ref (latest | previous | file name | timestamp).\n\n${usage()}`,
+    );
+  }
+  if (name === "id") {
+    return new Error(
+      `"snapshot show" needs a metric id and a snapshot ref (latest | previous | file name | timestamp).\n\n${usage()}`,
+    );
+  }
+  return undefined;
+}
+
+function unknownOptionError(err: CommanderError): Error {
+  const flag = matchGroup(err.message, /error: unknown option '([^']+)'/, "option");
+  return new Error(`Unknown flag "${flag}".\n\n${usage()}`);
+}
+
+function optionMissingArgumentError(err: CommanderError): Error {
+  const flag = matchGroup(err.message, /error: option '([^']+)' argument missing/, "flag");
+  return new Error(`Flag ${flag} needs a value.\n\n${usage()}`);
+}
+
+const COMMANDER_ERROR_MAP: Record<string, (err: CommanderError) => Error | undefined> = {
+  "commander.unknownCommand": unknownCommandError,
+  "commander.excessArguments": excessArgumentsError,
+  "commander.missingArgument": missingArgumentError,
+  "commander.unknownOption": unknownOptionError,
+  "commander.optionMissingArgument": optionMissingArgumentError,
+};
+
 function mapCommanderError(err: unknown): Error {
   if (err instanceof CommanderError) {
-    if (err.code === "commander.unknownCommand") {
-      const match = err.message.match(/unknown command '([^']+)'/);
-      const unknown = match?.[1] ?? "command";
-      return new Error(`Unknown command "${unknown}".\n\n${usage()}`);
-    }
-    if (err.code === "commander.excessArguments") {
-      const match = err.message.match(/error: too many arguments for '([^']+)'/);
-      const command = match?.[1] ?? "command";
-      return new Error(`Too many arguments for "${command}".\n\n${usage()}`);
-    }
-    if (err.code === "commander.missingArgument") {
-      const match = err.message.match(/error: missing required argument '([^']+)'/);
-      if (match?.[1] === "ref") {
-        return new Error(
-          `"snapshot show" needs a snapshot ref (latest | previous | file name | timestamp).\n\n${usage()}`,
-        );
-      }
-    }
-    if (err.code === "commander.unknownOption") {
-      const match = err.message.match(/error: unknown option '([^']+)'/);
-      const flag = match?.[1] ?? "option";
-      return new Error(`Unknown flag "${flag}".\n\n${usage()}`);
-    }
-    if (err.code === "commander.optionMissingArgument") {
-      const match = err.message.match(/error: option '([^']+)' argument missing/);
-      const flag = match?.[1] ?? "flag";
-      return new Error(`Flag ${flag} needs a value.\n\n${usage()}`);
-    }
+    const mapped = COMMANDER_ERROR_MAP[err.code]?.(err);
+    if (mapped) return mapped;
   }
   if (err instanceof Error) return err;
   return new Error(String(err));
@@ -417,28 +449,15 @@ function buildCompletionCommand(
 }
 
 function buildShowCommand(
-  id: string | undefined,
-  ref: string | undefined,
+  id: string,
+  ref: string,
   options: ShowOptions,
 ): Extract<MensuraCommand, { name: "show" }> {
-  const positionals = positionalsFrom(id, ref);
-  rejectExtra("show", positionals, 2);
-  const [a, b] = positionals;
-  if (a === undefined) {
-    throw new Error(
-      `"snapshot show" needs a metric id and a snapshot ref (latest | previous | file name | timestamp).\n\n${usage()}`,
-    );
-  }
-  const metric = metricId(a);
-  if (b === undefined) {
-    throw new Error(
-      `"snapshot show" needs a snapshot ref (latest | previous | file name | timestamp).\n\n${usage()}`,
-    );
-  }
+  rejectExtra("show", [], 0);
   return {
     name: "show",
-    metric,
-    ref: b,
+    metric: metricId(id),
+    ref,
     top: options.top ?? DEFAULT_TOP,
     min: options.min,
     file: options.file,

@@ -1,5 +1,6 @@
 import {
   checkoutStatus,
+  ensureBuiltinMetrics,
   ensureMensuraConfigFile,
   evaluateAllMetrics,
   evaluateMetric,
@@ -59,6 +60,7 @@ export async function runMensuraCli(
   env: NodeJS.ProcessEnv = process.env,
   options: RunMensuraCliOptions = {},
 ): Promise<number> {
+  await ensureBuiltinMetrics();
   const isTTY = options.isTTY ?? stdout.isTTY === true;
   let command: MensuraCommand;
   try {
@@ -249,6 +251,10 @@ function writePiggybackSavedLines(
   stderr: Output,
 ): void {
   for (const entry of result.piggyback) {
+    if (!entry.ok) {
+      stderr.write(`piggyback ${entry.id} failed: ${entry.error.message}\n`);
+      continue;
+    }
     const path = entry.result.snapshot?.path;
     if (!path) continue;
     stderr.write(`${entry.result.reused ? "reused" : "saved"} ${path}\n`);

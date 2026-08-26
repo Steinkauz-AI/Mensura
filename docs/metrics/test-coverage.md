@@ -11,7 +11,7 @@ Statement coverage percent 0–100 per function, joined from Istanbul maps onto 
 
 Runs the checkout’s `test:coverage` script first (only when the metric must measure again). Spawn uses `shell: false` — `shell: true` leaks TTY output and trips Node DEP0190. On Windows the spawn uses `ComSpec` / `cmd.exe` with `/d /s /c`; on Unix it runs the package manager binary directly (`npm` or `pnpm`, chosen by presence of `pnpm-lock.yaml`).
 
-Istanbul load: `coverage/` directories are searched (unlike the source walk). A missing `coverage-final.json` is an error, not zeros. Test files (`*.test.*` / `*.spec.*`) are omitted.
+Istanbul load: `coverage/` directories are searched (unlike the source walk). A missing `coverage-final.json` is an error, not zeros. Test files (`*.test.*` / `*.spec.*` on basename, or any path under a `tests` / `__tests__` directory) are omitted.
 
 ## Rationale
 

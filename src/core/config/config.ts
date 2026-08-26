@@ -171,39 +171,73 @@ function parseBands(
   defaults: MetricBandsConfig,
 ): MetricBandsConfig {
   if (Array.isArray(raw)) {
-    if (raw.length === 3 && raw.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      const cuts = raw as unknown as BandCuts;
-      validateCuts(cuts, metricId, source);
-      return {
-        cuts,
-        labels: labelsFromCuts(cuts, catalogDirection(metricId)),
-      };
-    }
-    throw new Error(
-      `${source}: metrics.${metricId}.bands array must be three finite cut numbers`,
-    );
+    return parseBandsArray(raw, metricId, source);
   }
   if (raw === null || typeof raw !== "object") {
     throw new Error(
       `${source}: metrics.${metricId}.bands must be { cuts, labels? } or [c0, c1, c2]`,
     );
   }
-  const obj = raw as { cuts?: unknown; labels?: unknown };
-  let cuts = defaults.cuts;
-  if (obj.cuts !== undefined) {
-    if (
-      !Array.isArray(obj.cuts) ||
-      obj.cuts.length !== 3 ||
-      obj.cuts.some((n) => typeof n !== "number" || !Number.isFinite(n))
-    ) {
-      throw new Error(
-        `${source}: metrics.${metricId}.bands.cuts must be three finite numbers`,
-      );
-    }
-    cuts = obj.cuts as unknown as BandCuts;
+  return parseBandsObject(raw as { cuts?: unknown; labels?: unknown }, metricId, source, defaults);
+}
+
+function parseBandsArray(
+  raw: unknown[],
+  metricId: string,
+  source: string,
+): MetricBandsConfig {
+  if (raw.length === 3 && raw.every((n) => typeof n === "number" && Number.isFinite(n))) {
+    const cuts = raw as unknown as BandCuts;
     validateCuts(cuts, metricId, source);
+    return {
+      cuts,
+      labels: labelsFromCuts(cuts, catalogDirection(metricId)),
+    };
   }
-  let labels = defaults.labels;
+  throw new Error(
+    `${source}: metrics.${metricId}.bands array must be three finite cut numbers`,
+  );
+}
+
+function parseBandsObject(
+  obj: { cuts?: unknown; labels?: unknown },
+  metricId: string,
+  source: string,
+  defaults: MetricBandsConfig,
+): MetricBandsConfig {
+  const cuts = parseCutsField(obj.cuts, metricId, source, defaults.cuts);
+  const labels = parseLabelsField(obj, metricId, source, defaults.labels, cuts);
+  return { cuts, labels };
+}
+
+function parseCutsField(
+  raw: unknown,
+  metricId: string,
+  source: string,
+  defaults: BandCuts,
+): BandCuts {
+  if (raw === undefined) return defaults;
+  if (
+    !Array.isArray(raw) ||
+    raw.length !== 3 ||
+    raw.some((n) => typeof n !== "number" || !Number.isFinite(n))
+  ) {
+    throw new Error(
+      `${source}: metrics.${metricId}.bands.cuts must be three finite numbers`,
+    );
+  }
+  const cuts = raw as unknown as BandCuts;
+  validateCuts(cuts, metricId, source);
+  return cuts;
+}
+
+function parseLabelsField(
+  obj: { cuts?: unknown; labels?: unknown },
+  metricId: string,
+  source: string,
+  defaults: BandLabels,
+  cuts: BandCuts,
+): BandLabels {
   if (obj.labels !== undefined) {
     if (
       !Array.isArray(obj.labels) ||
@@ -214,11 +248,12 @@ function parseBands(
         `${source}: metrics.${metricId}.bands.labels must be four non-empty strings`,
       );
     }
-    labels = obj.labels as unknown as BandLabels;
-  } else if (obj.cuts !== undefined) {
-    labels = labelsFromCuts(cuts, catalogDirection(metricId));
+    return obj.labels as unknown as BandLabels;
   }
-  return { cuts, labels };
+  if (obj.cuts !== undefined) {
+    return labelsFromCuts(cuts, catalogDirection(metricId));
+  }
+  return defaults;
 }
 
 function validateCuts(cuts: BandCuts, metricId: string, source: string): void {

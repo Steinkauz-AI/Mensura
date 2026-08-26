@@ -40,6 +40,17 @@ export async function seedSnapshotStore(
 ): Promise<void> {
   const dir = join(root, ".mensura", "metrics", metric);
   await mkdir(dir, { recursive: true });
+  const entries = await writeCraftedSnapshots(dir, metric, root, snapshots);
+  entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  await writeFile(join(dir, "manifest.json"), `${JSON.stringify(entries, null, 2)}\n`);
+}
+
+async function writeCraftedSnapshots(
+  dir: string,
+  metric: string,
+  root: string,
+  snapshots: CraftedSnapshot[],
+): Promise<Array<{ file: string; timestamp: string }>> {
   const entries: Array<{ file: string; timestamp: string }> = [];
   for (const snap of snapshots) {
     const file = `${snap.timestamp.replaceAll(":", "-")}.json`;
@@ -54,8 +65,7 @@ export async function seedSnapshotStore(
     await writeFile(join(dir, file), `${JSON.stringify(doc)}\n`);
     entries.push({ file, timestamp: snap.timestamp });
   }
-  entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  await writeFile(join(dir, "manifest.json"), `${JSON.stringify(entries, null, 2)}\n`);
+  return entries;
 }
 
 export function capture(isTTY = false): Capture {

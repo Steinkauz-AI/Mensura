@@ -32,8 +32,11 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Build
+        run: pnpm build
+
       - name: Test
         run: pnpm test
 
-      - name: Build
-        run: pnpm build
+      - name: Mensura gates
+        run: node bin/mensura.mjs run --all --check

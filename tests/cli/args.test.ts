@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { resolve } from "node:path";
+import { ensureBuiltinMetrics } from "../../src/index.js";
 import { parseMensuraArgs } from "../../src/cli/args.js";
 
 const cwd = resolve("/tmp", "factory");
+
+beforeAll(async () => {
+  await ensureBuiltinMetrics();
+});
 
 describe("parseMensuraArgs", () => {
   it("prints help for a bare invocation, same text as --help", () => {
@@ -82,13 +87,16 @@ describe("parseMensuraArgs", () => {
       /needs a metric id and a snapshot ref/,
     );
     expect(() => parseMensuraArgs(["snapshot", "show", "latest"], cwd)).toThrow(
+      /needs a snapshot ref/,
+    );
+    expect(() => parseMensuraArgs(["snapshot", "show", "latest", "previous"], cwd)).toThrow(
       /Unknown metric "latest"/,
     );
   });
 
   it("rejects an unknown metric in the id slot listing the available ones", () => {
     expect(() => parseMensuraArgs(["run", "nope", "somewhere"], cwd)).toThrow(
-      /Unknown metric "nope". Available: cyclomatic-complexity, cognitive-complexity, halstead, nesting-depth, maintainability-index, test-coverage, crap, cycles, coupling, encapsulation, propagation-cost/,
+      /Unknown metric "nope". Available: cognitive-complexity, coupling, crap, cycles, cyclomatic-complexity, encapsulation, halstead, maintainability-index, nesting-depth, propagation-cost, test-coverage/,
     );
   });
 

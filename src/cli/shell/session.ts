@@ -139,6 +139,14 @@ function handleCatalog(state: ShellState, key: ShellKey): ShellEffect {
     state.mode = state.mode === "view" ? "run" : "view";
     return NONE;
   }
+  const nav = handleCatalogNav(state, key);
+  if (nav) return nav;
+  if (state.mode === "run") return handleRun(state, key);
+  if (key === "enter") return enterInspect(state);
+  return NONE;
+}
+
+function handleCatalogNav(state: ShellState, key: ShellKey): ShellEffect | null {
   if (key === "up") {
     state.cursor = wrap(state.cursor - 1, state.rows.length);
     return NONE;
@@ -147,19 +155,19 @@ function handleCatalog(state: ShellState, key: ShellKey): ShellEffect {
     state.cursor = wrap(state.cursor + 1, state.rows.length);
     return NONE;
   }
-  if (state.mode === "run") return handleRun(state, key);
-  if (key === "enter") {
-    const metric = state.rows[state.cursor];
-    if (!metric) return NONE;
-    state.screen = "inspect";
-    state.metric = metric.id;
-    state.snapshots = [];
-    state.inspectCursor = 0;
-    state.marked = [];
-    state.notice = null;
-    return { type: "inspect", metric: metric.id };
-  }
-  return NONE;
+  return null;
+}
+
+function enterInspect(state: ShellState): ShellEffect {
+  const metric = state.rows[state.cursor];
+  if (!metric) return NONE;
+  state.screen = "inspect";
+  state.metric = metric.id;
+  state.snapshots = [];
+  state.inspectCursor = 0;
+  state.marked = [];
+  state.notice = null;
+  return { type: "inspect", metric: metric.id };
 }
 
 function handleRun(state: ShellState, key: ShellKey): ShellEffect {
@@ -196,14 +204,22 @@ function handleRun(state: ShellState, key: ShellKey): ShellEffect {
 }
 
 function handleInspect(state: ShellState, key: ShellKey): ShellEffect {
-  if (key === "quit") {
-    state.screen = "catalog";
-    state.metric = null;
-    state.snapshots = [];
-    state.marked = [];
-    state.notice = null;
-    return NONE;
-  }
+  if (key === "quit") return exitInspect(state);
+  const nav = handleInspectNav(state, key);
+  if (nav) return nav;
+  return handleInspectAction(state, key);
+}
+
+function exitInspect(state: ShellState): ShellEffect {
+  state.screen = "catalog";
+  state.metric = null;
+  state.snapshots = [];
+  state.marked = [];
+  state.notice = null;
+  return NONE;
+}
+
+function handleInspectNav(state: ShellState, key: ShellKey): ShellEffect | null {
   if (key === "up") {
     state.inspectCursor = wrap(state.inspectCursor - 1, state.snapshots.length);
     return NONE;
@@ -212,6 +228,10 @@ function handleInspect(state: ShellState, key: ShellKey): ShellEffect {
     state.inspectCursor = wrap(state.inspectCursor + 1, state.snapshots.length);
     return NONE;
   }
+  return null;
+}
+
+function handleInspectAction(state: ShellState, key: ShellKey): ShellEffect {
   const focused = state.snapshots[state.inspectCursor];
   const metric = state.metric;
   if (!metric) return NONE;

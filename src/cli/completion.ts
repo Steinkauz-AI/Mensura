@@ -22,9 +22,30 @@ type Tree = {
   commands: Tree[];
 };
 
+type ScriptCtx = {
+  commands: string[];
+  rootFlags: string;
+  snapshotSubs: string[];
+  shells: string[];
+  metrics: string[];
+  refs: string[];
+  runFlags: string;
+  listFlags: string;
+  showFlags: string;
+  diffFlags: string;
+  refFlags: string[];
+  pathFlags: string[];
+  countFlags: string[];
+};
+
 export function completionScript(shell: CompletionShell): string {
   const tree = inspect(mensuraProgram());
   const metrics = listMetrics().map((metric) => metric.id);
+  if (metrics.length === 0) {
+    throw new Error(
+      "completionScript: no metrics registered — call ensureBuiltinMetrics() first",
+    );
+  }
   const refs = [...SNAPSHOT_REFS];
   switch (shell) {
     case "bash":
@@ -70,81 +91,6 @@ function words(values: readonly string[]): string {
   return values.join(" ");
 }
 
-function bashScript(tree: Tree, metrics: string[], refs: string[]): string {
-  const run = find(tree, "run");
-  const list = find(tree, "list");
-  const snapshot = find(tree, "snapshot");
-  const show = snapshot ? find(snapshot, "show") : undefined;
-  const diff = snapshot ? find(snapshot, "diff") : undefined;
-  const completion = find(tree, "completion");
-  const commands = tree.commands.map((child) => child.name);
-  const rootFlags = "-i --interactive -h --help";
-  const snapshotSubs = snapshot?.commands.map((child) => child.name) ?? [];
-  const shells = completion ? [...COMPLETION_SHELLS] : [];
-  const refFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "ref")
-    .map((flag) => flag.long);
-  const pathFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "path")
-    .map((flag) => flag.long);
-  const countFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "count")
-    .map((flag) => flag.long);
-
-  return [
-    "_mensura() {",
-    "  local cur prev c1 c2",
-    "  cur=\"${COMP_WORDS[COMP_CWORD]}\"",
-    "  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"",
-    "  c1=\"${COMP_WORDS[1]}\"",
-    "  c2=\"${COMP_WORDS[2]}\"",
-    "  case \"$prev\" in",
-    `    ${flagCase(refFlags)}) COMPREPLY=( $(compgen -W "${words(refs)}" -- "$cur") ); return ;;`,
-    `    ${flagCase(pathFlags)}) COMPREPLY=( $(compgen -f -- "$cur") ); return ;;`,
-    `    ${flagCase(countFlags)}) return ;;`,
-    "  esac",
-    "  if [[ \"$cur\" == -* ]]; then",
-    "    local flags=\"\"",
-    "    case \"$c1\" in",
-    `      run) flags="${words(flagNames(run))}" ;;`,
-    `      list) flags="${words(flagNames(list))}" ;;`,
-    "      snapshot)",
-    "        case \"$c2\" in",
-    `          show) flags="${words(flagNames(show))}" ;;`,
-    `          diff) flags="${words(flagNames(diff))}" ;;`,
-    "        esac",
-    "        ;;",
-    "    esac",
-    "    COMPREPLY=( $(compgen -W \"$flags\" -- \"$cur\") )",
-    "    return",
-    "  fi",
-    "  if [[ $COMP_CWORD -eq 1 ]]; then",
-    `    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "${rootFlags}" -- "$cur") ); return; fi`,
-    `    COMPREPLY=( $(compgen -W "${words(commands)}" -- "$cur") )`,
-    "    return",
-    "  fi",
-    "  case \"$c1\" in",
-    `    run) COMPREPLY=( $(compgen -W "${words(metrics)}" -- "$cur") ) ;;`,
-    "    snapshot)",
-    "      if [[ $COMP_CWORD -eq 2 ]]; then",
-    `        COMPREPLY=( $(compgen -W "${words(snapshotSubs)}" -- "$cur") )`,
-    "      elif [[ \"$c2\" == \"show\" ]]; then",
-    "        if [[ $COMP_CWORD -eq 3 ]]; then",
-    `          COMPREPLY=( $(compgen -W "${words(metrics)}" -- "$cur") )`,
-    "        else",
-    `          COMPREPLY=( $(compgen -W "${words(refs)}" -- "$cur") )`,
-    "        fi",
-    "      elif [[ \"$c2\" == \"diff\" ]]; then",
-    `        COMPREPLY=( $(compgen -W "${words(metrics)}" -- "$cur") )`,
-    "      fi",
-    "      ;;",
-    `    completion) COMPREPLY=( $(compgen -W "${words(shells)}" -- "$cur") ) ;;`,
-    "  esac",
-    "}",
-    "complete -F _mensura mensura",
-  ].join("\n");
-}
-
 function flagCase(flags: string[]): string {
   return flags.length > 0 ? flags.join("|") : "__mensura_none__";
 }
@@ -153,27 +99,226 @@ function allFlags(node: Tree): Flag[] {
   return [...node.flags, ...node.commands.flatMap(allFlags)];
 }
 
-function zshScript(tree: Tree, metrics: string[], refs: string[]): string {
-  const commands = tree.commands.map((child) => child.name);
-  const snapshot = find(tree, "snapshot");
-  const snapshotSubs = snapshot?.commands.map((child) => child.name) ?? [];
-  const run = find(tree, "run");
-  const list = find(tree, "list");
-  const show = snapshot ? find(snapshot, "show") : undefined;
-  const diff = snapshot ? find(snapshot, "diff") : undefined;
-  const completion = find(tree, "completion");
-  const shells = completion ? [...COMPLETION_SHELLS] : [];
-  const rootFlags = "-i --interactive -h --help";
-  const refFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "ref")
+function longsOfKind(tree: Tree, kind: FlagKind): string[] {
+  return allFlags(tree)
+    .filter((flag) => flag.kind === kind)
     .map((flag) => flag.long);
-  const pathFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "path")
-    .map((flag) => flag.long);
-  const countFlags = allFlags(tree)
-    .filter((flag) => flag.kind === "count")
-    .map((flag) => flag.long);
+}
 
+function commandFlagWords(tree: Tree, name: string): string {
+  return words(flagNames(find(tree, name)));
+}
+
+function snapshotFlagWords(snapshot: Tree | undefined, name: string): string {
+  return words(flagNames(snapshot ? find(snapshot, name) : undefined));
+}
+
+function scriptCtx(tree: Tree, metrics: string[], refs: string[]): ScriptCtx {
+  const snapshot = find(tree, "snapshot");
+  const completion = find(tree, "completion");
+  return {
+    commands: tree.commands.map((child) => child.name),
+    rootFlags: "-i --interactive -h --help",
+    snapshotSubs: snapshot?.commands.map((child) => child.name) ?? [],
+    shells: completion ? [...COMPLETION_SHELLS] : [],
+    metrics,
+    refs,
+    runFlags: commandFlagWords(tree, "run"),
+    listFlags: commandFlagWords(tree, "list"),
+    showFlags: snapshotFlagWords(snapshot, "show"),
+    diffFlags: snapshotFlagWords(snapshot, "diff"),
+    refFlags: longsOfKind(tree, "ref"),
+    pathFlags: longsOfKind(tree, "path"),
+    countFlags: longsOfKind(tree, "count"),
+  };
+}
+
+function prevCaseSpec(ctx: ScriptCtx) {
+  return {
+    refCase: flagCase(ctx.refFlags),
+    pathCase: flagCase(ctx.pathFlags),
+    countCase: flagCase(ctx.countFlags),
+    refsWord: words(ctx.refs),
+  };
+}
+
+function flagSwitchSpec(ctx: ScriptCtx) {
+  return {
+    runFlags: ctx.runFlags,
+    listFlags: ctx.listFlags,
+    showFlags: ctx.showFlags,
+    diffFlags: ctx.diffFlags,
+  };
+}
+
+function snapshotCommandSpec(ctx: ScriptCtx) {
+  return {
+    snapshotSubs: words(ctx.snapshotSubs),
+    metrics: words(ctx.metrics),
+    refs: words(ctx.refs),
+    shells: words(ctx.shells),
+    commands: words(ctx.commands),
+  };
+}
+
+function bashPrevBlock(ctx: ScriptCtx): string[] {
+  const prev = prevCaseSpec(ctx);
+  return [
+    "  case \"$prev\" in",
+    `    ${prev.refCase}) COMPREPLY=( $(compgen -W "${prev.refsWord}" -- "$cur") ); return ;;`,
+    `    ${prev.pathCase}) COMPREPLY=( $(compgen -f -- "$cur") ); return ;;`,
+    `    ${prev.countCase}) return ;;`,
+    "  esac",
+  ];
+}
+
+function bashFlagBlock(ctx: ScriptCtx): string[] {
+  const flags = flagSwitchSpec(ctx);
+  return [
+    "  if [[ \"$cur\" == -* ]]; then",
+    "    local flags=\"\"",
+    "    case \"$c1\" in",
+    `      run) flags="${flags.runFlags}" ;;`,
+    `      list) flags="${flags.listFlags}" ;;`,
+    "      snapshot)",
+    "        case \"$c2\" in",
+    `          show) flags="${flags.showFlags}" ;;`,
+    `          diff) flags="${flags.diffFlags}" ;;`,
+    "        esac",
+    "        ;;",
+    "    esac",
+    "    COMPREPLY=( $(compgen -W \"$flags\" -- \"$cur\") )",
+    "    return",
+    "  fi",
+  ];
+}
+
+function bashRootBlock(ctx: ScriptCtx): string[] {
+  return [
+    "  if [[ $COMP_CWORD -eq 1 ]]; then",
+    `    if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "${ctx.rootFlags}" -- "$cur") ); return; fi`,
+    `    COMPREPLY=( $(compgen -W "${words(ctx.commands)}" -- "$cur") )`,
+    "    return",
+    "  fi",
+  ];
+}
+
+function bashSnapshotBlock(spec: ReturnType<typeof snapshotCommandSpec>): string[] {
+  return [
+    "    snapshot)",
+    "      if [[ $COMP_CWORD -eq 2 ]]; then",
+    `        COMPREPLY=( $(compgen -W "${spec.snapshotSubs}" -- "$cur") )`,
+    "      elif [[ \"$c2\" == \"show\" ]]; then",
+    "        if [[ $COMP_CWORD -eq 3 ]]; then",
+    `          COMPREPLY=( $(compgen -W "${spec.metrics}" -- "$cur") )`,
+    "        else",
+    `          COMPREPLY=( $(compgen -W "${spec.refs}" -- "$cur") )`,
+    "        fi",
+    "      elif [[ \"$c2\" == \"diff\" ]]; then",
+    `        COMPREPLY=( $(compgen -W "${spec.metrics}" -- "$cur") )`,
+    "      fi",
+    "      ;;",
+  ];
+}
+
+function bashCommandBlock(ctx: ScriptCtx): string[] {
+  const spec = snapshotCommandSpec(ctx);
+  return [
+    "  case \"$c1\" in",
+    `    run) COMPREPLY=( $(compgen -W "${spec.metrics}" -- "$cur") ) ;;`,
+    ...bashSnapshotBlock(spec),
+    `    completion) COMPREPLY=( $(compgen -W "${spec.shells}" -- "$cur") ) ;;`,
+    "  esac",
+  ];
+}
+
+function bashScript(tree: Tree, metrics: string[], refs: string[]): string {
+  const ctx = scriptCtx(tree, metrics, refs);
+  return [
+    "_mensura() {",
+    "  local cur prev c1 c2",
+    "  cur=\"${COMP_WORDS[COMP_CWORD]}\"",
+    "  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"",
+    "  c1=\"${COMP_WORDS[1]}\"",
+    "  c2=\"${COMP_WORDS[2]}\"",
+    ...bashPrevBlock(ctx),
+    ...bashFlagBlock(ctx),
+    ...bashRootBlock(ctx),
+    ...bashCommandBlock(ctx),
+    "}",
+    "complete -F _mensura mensura",
+  ].join("\n");
+}
+
+function zshPrevBlock(ctx: ScriptCtx): string[] {
+  const prev = prevCaseSpec(ctx);
+  return [
+    "case $prev in",
+    `  ${prev.refCase}) _values 'ref' ${prev.refsWord}; return ;;`,
+    `  ${prev.pathCase}) _files; return ;;`,
+    `  ${prev.countCase}) return ;;`,
+    "esac",
+  ];
+}
+
+function zshFlagBlock(ctx: ScriptCtx): string[] {
+  const flags = flagSwitchSpec(ctx);
+  return [
+    "if [[ $cur == -* ]]; then",
+    "  if (( CURRENT == 2 )); then",
+    `    _values 'flag' ${ctx.rootFlags}`,
+    "    return",
+    "  fi",
+    "  case $c1 in",
+    `    run) _values 'flag' ${flags.runFlags} ;;`,
+    `    list) _values 'flag' ${flags.listFlags} ;;`,
+    "    snapshot)",
+    "      case $c2 in",
+    `        show) _values 'flag' ${flags.showFlags} ;;`,
+    `        diff) _values 'flag' ${flags.diffFlags} ;;`,
+    "      esac",
+    "      ;;",
+    "  esac",
+    "  return",
+    "fi",
+  ];
+}
+
+function zshSnapshotBlock(spec: ReturnType<typeof snapshotCommandSpec>): string[] {
+  return [
+    "  snapshot)",
+    "    if (( CURRENT == 3 )); then",
+    `      _values 'subcommand' ${spec.snapshotSubs}`,
+    "    elif [[ $c2 == show ]]; then",
+    "      if (( CURRENT == 4 )); then",
+    `        _values 'metric' ${spec.metrics}`,
+    "      else",
+    `        _values 'ref' ${spec.refs}`,
+    "      fi",
+    "    elif [[ $c2 == diff ]]; then",
+    `      _values 'metric' ${spec.metrics}`,
+    "    fi",
+    "    ;;",
+  ];
+}
+
+function zshCommandBlock(ctx: ScriptCtx): string[] {
+  const spec = snapshotCommandSpec(ctx);
+  return [
+    "if (( CURRENT == 2 )); then",
+    `  _values 'command' ${spec.commands}`,
+    "  return",
+    "fi",
+    "case $c1 in",
+    `  run) _values 'metric' ${spec.metrics} ;;`,
+    ...zshSnapshotBlock(spec),
+    `  completion) _values 'shell' ${spec.shells} ;;`,
+    "esac",
+  ];
+}
+
+function zshScript(tree: Tree, metrics: string[], refs: string[]): string {
+  const ctx = scriptCtx(tree, metrics, refs);
   return [
     "#compdef mensura",
     "local cur prev c1 c2",
@@ -181,49 +326,9 @@ function zshScript(tree: Tree, metrics: string[], refs: string[]): string {
     "prev=${words[CURRENT-1]}",
     "c1=${words[2]}",
     "c2=${words[3]}",
-    "case $prev in",
-    `  ${flagCase(refFlags)}) _values 'ref' ${words(refs)}; return ;;`,
-    `  ${flagCase(pathFlags)}) _files; return ;;`,
-    `  ${flagCase(countFlags)}) return ;;`,
-    "esac",
-    "if [[ $cur == -* ]]; then",
-    "  if (( CURRENT == 2 )); then",
-    `    _values 'flag' ${rootFlags}`,
-    "    return",
-    "  fi",
-    "  case $c1 in",
-    `    run) _values 'flag' ${words(flagNames(run))} ;;`,
-    `    list) _values 'flag' ${words(flagNames(list))} ;;`,
-    "    snapshot)",
-    "      case $c2 in",
-    `        show) _values 'flag' ${words(flagNames(show))} ;;`,
-    `        diff) _values 'flag' ${words(flagNames(diff))} ;;`,
-    "      esac",
-    "      ;;",
-    "  esac",
-    "  return",
-    "fi",
-    "if (( CURRENT == 2 )); then",
-    `  _values 'command' ${words(commands)}`,
-    "  return",
-    "fi",
-    "case $c1 in",
-    `  run) _values 'metric' ${words(metrics)} ;;`,
-    "  snapshot)",
-    "    if (( CURRENT == 3 )); then",
-    `      _values 'subcommand' ${words(snapshotSubs)}`,
-    "    elif [[ $c2 == show ]]; then",
-    "      if (( CURRENT == 4 )); then",
-    `        _values 'metric' ${words(metrics)}`,
-    "      else",
-    `        _values 'ref' ${words(refs)}`,
-    "      fi",
-    "    elif [[ $c2 == diff ]]; then",
-    `      _values 'metric' ${words(metrics)}`,
-    "    fi",
-    "    ;;",
-    `  completion) _values 'shell' ${words(shells)} ;;`,
-    "esac",
+    ...zshPrevBlock(ctx),
+    ...zshFlagBlock(ctx),
+    ...zshCommandBlock(ctx),
   ].join("\n");
 }
 
@@ -245,27 +350,33 @@ function fishScript(tree: Tree, metrics: string[], refs: string[]): string {
   return lines.join("\n");
 }
 
-function emitFishCommand(
+function fishFlagLine(condition: string, flag: Flag, refs: string): string {
+  const long = flag.long.replace(/^--/, "");
+  if (flag.kind === "ref") {
+    return `complete -c mensura -n "${condition}" -l ${long} -r -a "${refs}"`;
+  }
+  if (flag.kind === "path") {
+    return `complete -c mensura -n "${condition}" -l ${long} -r -F`;
+  }
+  if (flag.kind === "count") {
+    return `complete -c mensura -n "${condition}" -l ${long} -r`;
+  }
+  return `complete -c mensura -n "${condition}" -l ${long}`;
+}
+
+function emitFishFlags(lines: string[], node: Tree, condition: string, refs: string): void {
+  for (const flag of node.flags) {
+    lines.push(fishFlagLine(condition, flag, refs));
+  }
+}
+
+function emitFishArgs(
   lines: string[],
   node: Tree,
+  condition: string,
   metrics: string,
   refs: string,
 ): void {
-  const condition = `__fish_seen_subcommand_from ${node.name}`;
-  for (const flag of node.flags) {
-    const long = flag.long.replace(/^--/, "");
-    if (flag.kind === "ref") {
-      lines.push(
-        `complete -c mensura -n "${condition}" -l ${long} -r -a "${refs}"`,
-      );
-    } else if (flag.kind === "path") {
-      lines.push(`complete -c mensura -n "${condition}" -l ${long} -r -F`);
-    } else if (flag.kind === "count") {
-      lines.push(`complete -c mensura -n "${condition}" -l ${long} -r`);
-    } else {
-      lines.push(`complete -c mensura -n "${condition}" -l ${long}`);
-    }
-  }
   for (const argument of node.args) {
     if (argument === "id") {
       lines.push(`complete -c mensura -n "${condition}" -a "${metrics}"`);
@@ -277,8 +388,31 @@ function emitFishCommand(
       lines.push(`complete -c mensura -n "${condition}" -a "(__fish_complete_directories)"`);
     }
   }
+}
+
+function emitFishChildren(
+  lines: string[],
+  node: Tree,
+  condition: string,
+  metrics: string,
+  refs: string,
+): void {
   for (const child of node.commands) {
-    lines.push(`complete -c mensura -n "${condition} && not __fish_seen_subcommand_from ${child.name}" -a "${child.name}"`);
+    lines.push(
+      `complete -c mensura -n "${condition} && not __fish_seen_subcommand_from ${child.name}" -a "${child.name}"`,
+    );
     emitFishCommand(lines, child, metrics, refs);
   }
+}
+
+function emitFishCommand(
+  lines: string[],
+  node: Tree,
+  metrics: string,
+  refs: string,
+): void {
+  const condition = `__fish_seen_subcommand_from ${node.name}`;
+  emitFishFlags(lines, node, condition, refs);
+  emitFishArgs(lines, node, condition, metrics, refs);
+  emitFishChildren(lines, node, condition, metrics, refs);
 }

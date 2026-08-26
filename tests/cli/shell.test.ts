@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogChrome } from "../../src/cli/shell/catalog.js";
+import { catalogChrome, statusColor } from "../../src/cli/shell/catalog.js";
 import { recoverScreen } from "../../src/cli/shell/screen.js";
 import { createSession, type CatalogRow } from "../../src/cli/shell/session.js";
 
@@ -114,6 +114,23 @@ describe("interactive catalog", () => {
     expect(session.state.screen).toBe("catalog");
     expect(session.handle("tab")).toEqual({ type: "none" });
     expect(session.state.mode).toBe("view");
+  });
+
+  it("openReport switches to the report screen", () => {
+    const session = createSession(rows);
+    session.openReport("report body");
+    expect(session.state.screen).toBe("report");
+    expect(session.state.reportText).toBe("report body");
+    expect(session.state.notice).toBeNull();
+  });
+});
+
+describe("catalog status colors", () => {
+  it("maps status labels to ink colors", () => {
+    expect(statusColor("up-to-date")).toBe("green");
+    expect(statusColor("outdated")).toBe("yellow");
+    expect(statusColor("missing")).toBeUndefined();
+    expect(statusColor("")).toBeUndefined();
   });
 });
 
