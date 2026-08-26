@@ -1,3 +1,4 @@
+import { ensureBuiltinMetrics } from "./builtins.js";
 import { hashMetricInputs } from "./inputs.js";
 import { listMetrics } from "./registry.js";
 import { listSnapshots, snapshotMatchingInputs } from "./snapshot.js";
@@ -20,6 +21,7 @@ export type CheckoutStatus = {
 
 
 export async function checkoutStatus(root: string): Promise<CheckoutStatus> {
+  await ensureBuiltinMetrics();
   const metrics = listMetrics();
   const listings = await Promise.all(
     metrics.map(async (metric) => ({

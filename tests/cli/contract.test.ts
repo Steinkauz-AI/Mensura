@@ -4,6 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  COVERAGE_LINES_A,
+  COVERAGE_LINES_B_FULL,
+  COVERAGE_LINES_B_PARTIAL,
+  expectCompletionFlags,
+  expectHelpBasics,
+  expectListedMetrics,
+  expectMinCheckSlice,
+  NO_ANSI,
+} from "./contract-helpers.js";
 
 
 
@@ -65,7 +75,6 @@ function mensura(args: string[], cwd: string): Promise<RunResult> {
   });
 }
 
-const NO_ANSI = /\x1b\[/;
 const METRIC = "cyclomatic-complexity";
 
 type SavedSnapshotFile = {
@@ -141,25 +150,19 @@ function manifestPath(root: string, metric = METRIC): string {
   return join(root, ".mensura", "metrics", metric, "manifest.json");
 }
 
-describe("mensura agent contract", () => {
+async function seedFixtureCoverage(root: string, partialB = false): Promise<void> {
+  await writeCoverageMap(root, {
+    "src/a.ts": COVERAGE_LINES_A,
+    "src/b.ts": partialB ? COVERAGE_LINES_B_PARTIAL : COVERAGE_LINES_B_FULL,
+  });
+}
+
+describe("mensura agent contract — core", () => {
   it("list names every registered metric without ANSI", async () => {
     const root = await checkout(FIXTURE);
     const run = await mensura(["list"], root);
     expect(run.code).toBe(0);
-    expect(run.stdout).toContain("cyclomatic-complexity");
-    expect(run.stdout).toContain("cognitive-complexity");
-    expect(run.stdout).toContain("halstead");
-    expect(run.stdout).toContain("nesting-depth");
-    expect(run.stdout).toContain("maintainability-index");
-    expect(run.stdout).toContain("test-coverage");
-    expect(run.stdout).toContain("crap");
-    expect(run.stdout).toContain("cycles");
-    expect(run.stdout).toContain("coupling");
-    expect(run.stdout).toContain("encapsulation");
-    expect(run.stdout).toContain("propagation-cost");
-    expect(run.stdout).toContain("status");
-    expect(run.stdout).toContain("missing");
-    expect(run.stdout).not.toContain("currency");
+    expectListedMetrics(run.stdout);
     expect(NO_ANSI.test(run.stdout)).toBe(false);
   });
 
@@ -255,25 +258,19 @@ describe("mensura agent contract", () => {
 
   it("run crap: piggybacks test-coverage from one test:coverage run", async () => {
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-        { line: 3, hits: 1 },
-        { line: 8, hits: 1 },
-        { line: 12, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root);
     const run = await mensura(["run", "crap"], root);
     expect(run.code).toBe(0);
     expect(await readFile(join(root, "coverage-ran"), "utf8")).toBe("1");
     expect(JSON.parse(await readFile(manifestPath(root, "crap"), "utf8"))).toHaveLength(1);
     expect(JSON.parse(await readFile(manifestPath(root, "test-coverage"), "utf8"))).toHaveLength(1);
     expect(run.stderr).toMatch(/saved /);
+  });
+
+  it("run crap: marks crap and test-coverage up-to-date after piggyback", async () => {
+    const root = await checkout(FIXTURE);
+    await seedFixtureCoverage(root);
+    expect((await mensura(["run", "crap"], root)).code).toBe(0);
     const listed = await mensura(["list"], root);
     expect(listed.stdout).toMatch(/crap\s+CRAP\s+up-to-date/);
     expect(listed.stdout).toMatch(/test-coverage\s+Test coverage\s+up-to-date/);
@@ -300,7 +297,7 @@ describe("mensura agent contract", () => {
     expect(plainRun.stdout).toContain("outdated");
   });
 
-  it("run and run --check share stdout; --check only changes the exit code", async () => {
+  it("run and run --check share stdout for cyclomatic-complexity", async () => {
     const root = await checkout(FIXTURE);
     const measuring = await mensura(["run", METRIC], root);
     const checking = await mensura(["run", METRIC, "--check"], root);
@@ -308,7 +305,9 @@ describe("mensura agent contract", () => {
     expect(checking.code).toBe(0);
     expect(checking.stdout).toBe(measuring.stdout);
     expect(measuring.stdout).toContain("threshold  max 20");
+  });
 
+  it("run --check changes only the exit code when nesting-depth fails", async () => {
     const deep = await checkout({ ...FIXTURE, "src/deep.ts": DEEP_TS });
     const nesting = await mensura(["run", "nesting-depth"], deep);
     const nestingCheck = await mensura(["run", "nesting-depth", "--check"], deep);
@@ -346,15 +345,7 @@ describe("mensura agent contract", () => {
     expect(run.code).toBe(0);
     expect(help.code).toBe(0);
     expect(run.stdout).toBe(help.stdout);
-    expect(run.stdout).toContain("mensura -i");
-    expect(run.stdout).toContain("list");
-    expect(run.stdout).toContain("run <id>");
-    expect(run.stdout).toContain("snapshot show");
-    expect(run.stdout).not.toContain("--json");
-    expect(run.stdout).toContain("Exit codes");
-    expect(run.stdout).toContain("2 gate failed");
-    expect(run.stdout).toMatch(/\d+ up-to-date, \d+ outdated, \d+ missing/);
-    expect(run.stdout).toContain("See mensura list.");
+    expectHelpBasics(run.stdout);
     expect(NO_ANSI.test(run.stdout)).toBe(false);
     expect(run.stderr).not.toMatch(/saved /);
   });
@@ -366,7 +357,9 @@ describe("mensura agent contract", () => {
     expect(run.stderr).toMatch(/TTY/);
     expect(run.stdout).toBe("");
   });
+});
 
+describe("mensura agent contract — metrics", () => {
   it("metric cognitive-complexity: plain overview names the metric", async () => {
     const root = await checkout(FIXTURE);
     const run = await mensura(["run", "cognitive-complexity", "--no-save"], root);
@@ -403,7 +396,7 @@ describe("mensura agent contract", () => {
     expect(NO_ANSI.test(run.stdout)).toBe(false);
   });
 
-  it("metric maintainability-index: prints index columns, VS bands, and catalog min 20", async () => {
+  it("metric maintainability-index: prints index columns and VS bands", async () => {
     const root = await checkout(FIXTURE);
     const run = await mensura(["run", "maintainability-index"], root);
     expect(run.code).toBe(0);
@@ -419,48 +412,45 @@ describe("mensura agent contract", () => {
     const simpleAt = run.stdout.indexOf("simple");
     expect(branchyAt).toBeGreaterThan(-1);
     expect(simpleAt).toBeGreaterThan(branchyAt);
+  });
 
-    const snapshot = await latestSnapshot(root, "maintainability-index");
-    const branchy = snapshot.report.units.find((unit) => unit.name === "branchy");
+  it("metric maintainability-index: snapshot holds per-function fields", async () => {
+    const root = await checkout(FIXTURE);
+    expect((await mensura(["run", "maintainability-index"], root)).code).toBe(0);
+    const branchy = (await latestSnapshot(root, "maintainability-index")).report.units.find(
+      (unit) => unit.name === "branchy",
+    );
     expect(branchy?.volume).toBeTypeOf("number");
     expect(branchy?.cyclomatic).toBeTypeOf("number");
     expect(branchy?.loc).toBeTypeOf("number");
     expect(branchy?.complexity).toBeGreaterThan(0);
     expect(branchy?.complexity).toBeLessThanOrEqual(100);
-
-    const passing = await mensura(["run", "maintainability-index", "--check"], root);
-    expect(passing.code).toBe(0);
-    expect(passing.stdout).toContain("threshold  min 20");
-
-    const sliced = await mensura(["run", "maintainability-index", "--check", "--min", "100"], root);
-    expect(sliced.code).toBe(0);
-    expect(sliced.stdout).toContain("threshold  min 20");
-    expect(sliced.stdout).not.toContain("threshold  min 100");
   });
 
-  it("metric test-coverage: ingests coverage-final.json and catalog min 50", async () => {
+  it("metric maintainability-index: --check uses catalog min 20", async () => {
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 0 },
-      ],
-    });
+    expect((await mensura(["run", "maintainability-index"], root)).code).toBe(0);
+    await expectMinCheckSlice(mensura, root, "maintainability-index", 20, 100);
+  });
+
+  it("metric test-coverage: errors without coverage-final.json", async () => {
     const missing = await mensura(["run", "test-coverage", "--no-save"], await checkout(FIXTURE));
     expect(missing.code).toBe(1);
     expect(missing.stderr).toMatch(/coverage-final\.json/);
+  });
 
+  it("metric test-coverage: errors without test:coverage script", async () => {
     const noScript = await mensura(
       ["run", "test-coverage", "--no-save"],
       await checkout({ "src/a.ts": "export function simple() { return 1; }\n" }),
     );
     expect(noScript.code).toBe(1);
     expect(noScript.stderr).toMatch(/test:coverage/);
+  });
 
+  it("metric test-coverage: ingests coverage-final.json", async () => {
+    const root = await checkout(FIXTURE);
+    await seedFixtureCoverage(root, true);
     const run = await mensura(["run", "test-coverage"], root);
     expect(run.code).toBe(0);
     expect(await readFile(join(root, "coverage-ran"), "utf8")).toBe("1");
@@ -468,39 +458,26 @@ describe("mensura agent contract", () => {
     expect(run.stdout).toContain("80-100");
     expect(run.stdout).toContain("0-19");
     expect(NO_ANSI.test(run.stdout)).toBe(false);
-
     const snapshot = await latestSnapshot(root, "test-coverage");
     expect(snapshot.report.units.find((unit) => unit.name === "simple")?.complexity).toBe(100);
-
-    const passing = await mensura(["run", "test-coverage", "--check"], root);
-    expect(passing.code).toBe(0);
-    expect(passing.stdout).toContain("threshold  min 50");
-
-    const sliced = await mensura(["run", "test-coverage", "--check", "--min", "100"], root);
-    expect(sliced.code).toBe(0);
-    expect(sliced.stdout).toContain("threshold  min 50");
-    expect(sliced.stdout).not.toContain("threshold  min 100");
   });
 
-  it("metric crap: joins cyclomatic and coverage and catalog max 30", async () => {
+  it("metric test-coverage: --check uses catalog min 50", async () => {
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-        { line: 3, hits: 1 },
-        { line: 8, hits: 1 },
-        { line: 12, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root, true);
+    expect((await mensura(["run", "test-coverage"], root)).code).toBe(0);
+    await expectMinCheckSlice(mensura, root, "test-coverage", 50, 100);
+  });
+
+  it("metric crap: errors without coverage-final.json", async () => {
     const missing = await mensura(["run", "crap", "--no-save"], await checkout(FIXTURE));
     expect(missing.code).toBe(1);
     expect(missing.stderr).toMatch(/coverage-final\.json/);
+  });
 
+  it("metric crap: joins cyclomatic and coverage columns", async () => {
+    const root = await checkout(FIXTURE);
+    await seedFixtureCoverage(root);
     const run = await mensura(["run", "crap"], root);
     expect(run.code).toBe(0);
     expect(run.stdout).toContain("CRAP");
@@ -509,13 +486,18 @@ describe("mensura agent contract", () => {
     expect(run.stdout).toContain("1-8");
     expect(run.stdout).toContain("31+");
     expect(NO_ANSI.test(run.stdout)).toBe(false);
-
-    const snapshot = await latestSnapshot(root, "crap");
-    const simple = snapshot.report.units.find((unit) => unit.name === "simple");
+    const simple = (await latestSnapshot(root, "crap")).report.units.find(
+      (unit) => unit.name === "simple",
+    );
     expect(simple?.cyclomatic).toBe(1);
     expect(simple?.coverage).toBe(100);
     expect(simple?.complexity).toBe(1);
+  });
 
+  it("metric crap: --check uses catalog max 30", async () => {
+    const root = await checkout(FIXTURE);
+    await seedFixtureCoverage(root);
+    expect((await mensura(["run", "crap"], root)).code).toBe(0);
     const passing = await mensura(["run", "crap", "--check"], root);
     expect(passing.code).toBe(0);
     expect(passing.stdout).toContain("threshold  max 30");
@@ -535,19 +517,12 @@ describe("mensura agent contract", () => {
     expect(noRef.code).toBe(1);
     expect(noRef.stderr).toMatch(/needs a metric id and a snapshot ref/);
   });
+});
 
+describe("mensura agent contract — run all", () => {
   it("run --all: plain dashboard lists every metric without ANSI", async () => {
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root);
     const run = await mensura(["run", "--all", "--no-save"], root);
     expect(run.code).toBe(0);
     expect(NO_ANSI.test(run.stdout)).toBe(false);
@@ -560,25 +535,15 @@ describe("mensura agent contract", () => {
   });
 
   it("run --all: dashboard lists stats, catalog threshold, and threshold violations", async () => {
-    const { listMetrics } = await import("../../src/index.js");
+    const { ensureBuiltinMetrics, listMetrics } = await import("../../src/index.js");
+    await ensureBuiltinMetrics();
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root);
     const run = await mensura(["run", "--all", "--no-save"], root);
     expect(run.code).toBe(0);
     const ids = listMetrics().map((metric) => metric.id);
     expect(ids).toHaveLength(11);
-    for (const id of ids) {
-      expect(run.stdout).toContain(id);
-    }
+    for (const id of ids) expect(run.stdout).toContain(id);
     expect(run.stdout).toContain("pass");
     expect(run.stdout).toContain("threshold");
     expect(run.stdout).toContain("threshold violations");
@@ -586,44 +551,42 @@ describe("mensura agent contract", () => {
     expect(run.stdout).toContain(">=50");
     expect(run.stdout).not.toContain("branchy (6)");
     expect(run.stdout).toContain(`passed ${ids.length}  failed 0  errors 0`);
+  });
+
+  it("run --all --check: stdout matches measure when all pass", async () => {
+    const { listMetrics } = await import("../../src/index.js");
+    const root = await checkout(FIXTURE);
+    await seedFixtureCoverage(root);
+    const run = await mensura(["run", "--all", "--no-save"], root);
     const checked = await mensura(["run", "--all", "--check", "--no-save"], root);
     expect(checked.code).toBe(0);
     expect(checked.stdout).toBe(run.stdout);
   });
 
-  it("run --all --check: exit code reflects pass/fail/error counts", async () => {
+  it("run --all --check: exit code 0 when all metrics pass", async () => {
     const { listMetrics } = await import("../../src/index.js");
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root);
     const passing = await mensura(["run", "--all", "--check", "--no-save"], root);
     expect(passing.code).toBe(0);
     expect(passing.stdout).toContain("pass");
     expect(passing.stdout).not.toMatch(/\bfail\b/);
     expect(passing.stdout).toContain(`passed ${listMetrics().length}  failed 0  errors 0`);
     const measuring = await mensura(["run", "--all", "--no-save"], root);
-    expect(measuring.code).toBe(0);
     expect(measuring.stdout).toBe(passing.stdout);
+  });
 
+  it("run --all --check: exit code 1 when coverage metrics error", async () => {
     const noCoverage = await checkout(FIXTURE);
     const failing = await mensura(["run", "--all", "--check", "--no-save"], noCoverage);
     expect(failing.code).toBe(1);
     expect(failing.stdout).toContain("error");
     expect(failing.stdout).toMatch(/errors [1-9]\d*/);
     const failingOverview = await mensura(["run", "--all", "--no-save"], noCoverage);
-    expect(failingOverview.code).toBe(0);
     expect(failingOverview.stdout).toBe(failing.stdout);
   });
 
-  it("run --all: continues when coverage metrics error and runs test:coverage once", async () => {
+  it("run --all: marks coverage metrics error without coverage file", async () => {
     const root = await checkout(FIXTURE);
     const run = await mensura(["run", "--all", "--no-save"], root);
     expect(run.code).toBe(0);
@@ -632,42 +595,21 @@ describe("mensura agent contract", () => {
     expect(run.stdout).toMatch(/cyclomatic-complexity\s+pass/);
     expect(run.stdout).toMatch(/coverage-final\.json/);
     expect(run.stdout).toContain("passed 9  failed 0  errors 2");
-
-    const withCoverage = await checkout(FIXTURE);
-    await writeCoverageMap(withCoverage, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
-    expect((await mensura(["run", "--all", "--no-save"], withCoverage)).code).toBe(0);
-    expect(await readFile(join(withCoverage, "coverage-ran"), "utf8")).toBe("1");
-
     const checkFail = await mensura(["run", "--all", "--check", "--no-save"], root);
     expect(checkFail.code).toBe(1);
     expect(checkFail.stdout).toBe(run.stdout);
-    expect(checkFail.stdout).toContain("errors 2");
+  });
+
+  it("run --all: runs test:coverage once when coverage is seeded", async () => {
+    const withCoverage = await checkout(FIXTURE);
+    await seedFixtureCoverage(withCoverage);
+    expect((await mensura(["run", "--all", "--no-save"], withCoverage)).code).toBe(0);
+    expect(await readFile(join(withCoverage, "coverage-ran"), "utf8")).toBe("1");
   });
 
   it("run --all --check: exits 2 when a metric fails its catalog threshold", async () => {
-    const root = await checkout({
-      ...FIXTURE,
-      "src/deep.ts": DEEP_TS,
-    });
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
+    const root = await checkout({ ...FIXTURE, "src/deep.ts": DEEP_TS });
+    await seedFixtureCoverage(root);
     const measuring = await mensura(["run", "--all", "--no-save"], root);
     const run = await mensura(["run", "--all", "--check", "--no-save"], root);
     expect(measuring.code).toBe(0);
@@ -680,16 +622,7 @@ describe("mensura agent contract", () => {
 
   it("run --all: saves a snapshot per metric by default", async () => {
     const root = await checkout(FIXTURE);
-    await writeCoverageMap(root, {
-      "src/a.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-      "src/b.ts": [
-        { line: 1, hits: 1 },
-        { line: 2, hits: 1 },
-      ],
-    });
+    await seedFixtureCoverage(root);
     const run = await mensura(["run", "--all"], root);
     expect(run.code).toBe(0);
     expect(run.stderr.match(/saved /g)?.length).toBeGreaterThanOrEqual(11);
@@ -698,7 +631,9 @@ describe("mensura agent contract", () => {
     ) as unknown[];
     expect(manifest).toHaveLength(1);
   });
+});
 
+describe("mensura agent contract — completion", () => {
   it("completion bash: prints a valid script to stdout with exit 0", async () => {
     const root = await checkout(FIXTURE);
     const run = await mensura(["completion", "bash"], root);
@@ -710,24 +645,13 @@ describe("mensura agent contract", () => {
   });
 
   it("completion: includes metric ids, snapshot refs, subcommands, and flags", async () => {
-    const { listMetrics } = await import("../../src/index.js");
+    const { ensureBuiltinMetrics, listMetrics } = await import("../../src/index.js");
+    await ensureBuiltinMetrics();
     const root = await checkout(FIXTURE);
     const run = await mensura(["completion", "bash"], root);
     expect(run.code).toBe(0);
-    for (const metric of listMetrics()) {
-      expect(run.stdout).toContain(metric.id);
-    }
-    expect(run.stdout).toContain("latest");
-    expect(run.stdout).toContain("previous");
-    expect(run.stdout).toContain("list");
-    expect(run.stdout).toContain("run");
-    expect(run.stdout).toContain("snapshot");
-    expect(run.stdout).toContain("show");
-    expect(run.stdout).toContain("diff");
-    expect(run.stdout).not.toContain("--json");
-    expect(run.stdout).toContain("--interactive");
-    expect(run.stdout).toContain("--baseline");
-    expect(run.stdout).toContain("--no-save");
+    for (const metric of listMetrics()) expect(run.stdout).toContain(metric.id);
+    expectCompletionFlags(run.stdout);
   });
 
   it("completion zsh and fish: print scripts to stdout with exit 0", async () => {

@@ -64,7 +64,7 @@ Function-grain metrics emit function units plus per-file rollups (count, min, ma
 
 ## Import graph
 
-Structure metrics share an in-memory directed graph: source files as nodes, static import/export/`require`/`import()` specifiers as edges. Relative specifiers resolve with TypeScript’s `.js` → `.ts` extension rewrite and `index` files. Bare specifiers resolve only when they name a `package.json` `name` found in the checkout (workspace packages); `node_modules` is never followed. `import type` is still an edge (structural coupling). Test files (`*.test.*` / `*.spec.*` on basename) are omitted. The graph is an intermediate, like the AST — it is not persisted. JSON snapshots under `.mensura/metrics/<id>/` remain the store; there is no graph database.
+Structure metrics share an in-memory directed graph: source files as nodes, static import/export/`require`/`import()` specifiers as edges. Relative specifiers resolve with TypeScript’s `.js` → `.ts` extension rewrite and `index` files. Bare specifiers resolve only when they name a `package.json` `name` found in the checkout (workspace packages); `node_modules` is never followed. `import type` is still an edge (structural coupling). Test files (`*.test.*` / `*.spec.*` on basename, or any path under a `tests` / `__tests__` directory) are omitted. The graph is an intermediate, like the AST — it is not persisted. JSON snapshots under `.mensura/metrics/<id>/` remain the store; there is no graph database.
 
 ## Input hash
 

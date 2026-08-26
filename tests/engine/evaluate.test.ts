@@ -41,6 +41,78 @@ function stubMetric(hooks: {
   };
 }
 
+function coverageBackedPair() {
+  const prepared = { n: 0 };
+  const coverageAnalyzed = { n: 0 };
+  const crapAnalyzed = { n: 0 };
+  const coverage = stubMetric({
+    analyze: async () => {
+      coverageAnalyzed.n += 1;
+      return emptyReport;
+    },
+    prepare: async () => {
+      prepared.n += 1;
+    },
+  });
+  coverage.id = "test-coverage";
+  coverage.name = "Test coverage";
+  const crap = stubMetric({
+    analyze: async () => {
+      crapAnalyzed.n += 1;
+      return emptyReport;
+    },
+    prepare: async () => {
+      prepared.n += 1;
+    },
+  });
+  crap.id = "crap";
+  crap.name = "CRAP";
+  return { catalog: [coverage, crap], prepared, coverageAnalyzed, crapAnalyzed, coverage, crap };
+}
+
+function currentSiblingPair() {
+  const coverageAnalyzed = { n: 0 };
+  const crapAnalyzed = { n: 0 };
+  const sibling = stubMetric({
+    analyze: async () => {
+      coverageAnalyzed.n += 1;
+      return emptyReport;
+    },
+    prepare: async () => {},
+  });
+  sibling.id = "test-coverage";
+  sibling.name = "Test coverage";
+  const crap = stubMetric({
+    analyze: async () => {
+      crapAnalyzed.n += 1;
+      return emptyReport;
+    },
+    prepare: async () => {},
+  });
+  crap.id = "crap";
+  crap.name = "CRAP";
+  return { catalog: [sibling, crap], coverageAnalyzed, crapAnalyzed, sibling, crap };
+}
+
+async function expectPiggybackFirstRun(
+  root: string,
+  pair: ReturnType<typeof coverageBackedPair>,
+): Promise<void> {
+  const result = await evaluateMetric(pair.crap, root, { catalog: pair.catalog });
+  expect(result.reused).toBe(false);
+  expect(pair.crapAnalyzed.n).toBe(1);
+  expect(pair.coverageAnalyzed.n).toBe(1);
+  expect(pair.prepared.n).toBe(1);
+  expect(result.piggyback.map((entry) => entry.id)).toEqual(["test-coverage"]);
+  const piggyback = result.piggyback[0];
+  expect(piggyback?.ok).toBe(true);
+  if (piggyback?.ok) {
+    expect(piggyback.result.reused).toBe(false);
+  }
+  expect(await listSnapshots({ root, metric: "crap" })).toHaveLength(1);
+  expect(await listSnapshots({ root, metric: "test-coverage" })).toHaveLength(1);
+}
+
 describe("evaluateMetric", () => {
   it("saves a snapshot on the first run and reuses it when inputs are unchanged", async () => {
     const root = await checkoutWith({
@@ -137,46 +209,12 @@ describe("evaluateMetric", () => {
     const root = await checkoutWith({
       "src/a.ts": "export function a() { return 1; }\n",
     });
-    let prepared = 0;
-    let coverageAnalyzed = 0;
-    let crapAnalyzed = 0;
-    const coverage = stubMetric({
-      analyze: async () => {
-        coverageAnalyzed += 1;
-        return emptyReport;
-      },
-      prepare: async () => {
-        prepared += 1;
-      },
-    });
-    coverage.id = "test-coverage";
-    coverage.name = "Test coverage";
-    const crap = stubMetric({
-      analyze: async () => {
-        crapAnalyzed += 1;
-        return emptyReport;
-      },
-      prepare: async () => {
-        prepared += 1;
-      },
-    });
-    crap.id = "crap";
-    crap.name = "CRAP";
-    const catalog = [coverage, crap];
-    const result = await evaluateMetric(crap, root, { catalog });
-    expect(result.reused).toBe(false);
-    expect(crapAnalyzed).toBe(1);
-    expect(coverageAnalyzed).toBe(1);
-    expect(prepared).toBe(1);
-    expect(result.piggyback.map((entry) => entry.id)).toEqual(["test-coverage"]);
-    expect(result.piggyback[0]?.result.reused).toBe(false);
-    expect(await listSnapshots({ root, metric: "crap" })).toHaveLength(1);
-    expect(await listSnapshots({ root, metric: "test-coverage" })).toHaveLength(1);
-
-    const second = await evaluateMetric(coverage, root, { catalog });
+    const pair = coverageBackedPair();
+    await expectPiggybackFirstRun(root, pair);
+    const second = await evaluateMetric(pair.catalog[0]!, root, { catalog: pair.catalog });
     expect(second.reused).toBe(true);
-    expect(coverageAnalyzed).toBe(1);
-    expect(prepared).toBe(1);
+    expect(pair.coverageAnalyzed.n).toBe(1);
+    expect(pair.prepared.n).toBe(1);
   });
 
   it("does not piggyback when save is false", async () => {
@@ -222,7 +260,14 @@ describe("evaluateMetric", () => {
     const result = await evaluateMetric(crap, root, { catalog: [coverage, crap] });
     expect(result.reused).toBe(false);
     expect(result.snapshot?.path).toBeTruthy();
-    expect(result.piggyback).toEqual([]);
+    expect(result.piggyback).toHaveLength(1);
+    expect(result.piggyback[0]).toMatchObject({
+      id: "test-coverage",
+      ok: false,
+    });
+    expect(
+      result.piggyback[0]?.ok === false && result.piggyback[0].error.message,
+    ).toBe("sibling");
     expect(await listSnapshots({ root, metric: "crap" })).toHaveLength(1);
   });
 
@@ -296,34 +341,15 @@ describe("evaluateMetric", () => {
     const root = await checkoutWith({
       "src/a.ts": "export function a() { return 1; }\n",
     });
-    let coverageAnalyzed = 0;
-    let crapAnalyzed = 0;
-    const sibling = stubMetric({
-      analyze: async () => {
-        coverageAnalyzed += 1;
-        return emptyReport;
-      },
-      prepare: async () => {},
-    });
-    sibling.id = "test-coverage";
-    sibling.name = "Test coverage";
-    const crap = stubMetric({
-      analyze: async () => {
-        crapAnalyzed += 1;
-        return emptyReport;
-      },
-      prepare: async () => {},
-    });
-    crap.id = "crap";
-    crap.name = "CRAP";
+    const { catalog, coverageAnalyzed, crapAnalyzed, sibling, crap } = currentSiblingPair();
     await evaluateMetric(sibling, root, { catalog: [sibling] });
-    expect(coverageAnalyzed).toBe(1);
+    expect(coverageAnalyzed.n).toBe(1);
     expect(await listSnapshots({ root, metric: "crap" })).toHaveLength(0);
 
-    const result = await evaluateMetric(crap, root, { catalog: [sibling, crap] });
+    const result = await evaluateMetric(crap, root, { catalog });
     expect(result.reused).toBe(false);
-    expect(crapAnalyzed).toBe(1);
-    expect(coverageAnalyzed).toBe(1);
+    expect(crapAnalyzed.n).toBe(1);
+    expect(coverageAnalyzed.n).toBe(1);
     expect(result.piggyback).toEqual([]);
     expect(await listSnapshots({ root, metric: "crap" })).toHaveLength(1);
   });

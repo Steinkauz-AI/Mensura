@@ -18,6 +18,16 @@ export async function analyzeFunctionScores(
   const files = (await listSourceFiles(root, include, skipDirs)).filter(
     (abs) => !skipPath(toPosix(relative(root, abs))),
   );
+  const { units, unparsed } = await scoreFiles(files, root, score);
+  unparsed.sort((a, b) => a.path.localeCompare(b.path));
+  return { units, files: rollup(units), unparsed };
+}
+
+async function scoreFiles(
+  files: string[],
+  root: string,
+  score: UnitScore,
+): Promise<Pick<ComplexityReport, "units" | "unparsed">> {
   const units: ComplexityUnit[] = [];
   const unparsed: ComplexityReport["unparsed"] = [];
   for (const abs of files) {
@@ -29,8 +39,7 @@ export async function analyzeFunctionScores(
       unparsed.push({ path, errorCount: parsed.parseErrorCount });
     }
   }
-  unparsed.sort((a, b) => a.path.localeCompare(b.path));
-  return { units, files: rollup(units), unparsed };
+  return { units, unparsed };
 }
 
 function rollup(units: ComplexityUnit[]): FileComplexity[] {

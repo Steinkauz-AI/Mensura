@@ -34,44 +34,11 @@ export function diffComplexity(
   before: ComplexityReport,
   after: ComplexityReport,
 ): ComplexityDiff {
-  const added: DiffUnitAdded[] = [];
-  const removed: DiffUnitRemoved[] = [];
-  const changed: DiffUnitChanged[] = [];
-
   const beforeIndex = keyedUnits(before);
   const afterIndex = keyedUnits(after);
-
-  for (const [key, unit] of afterIndex) {
-    const prev = beforeIndex.get(key);
-    if (!prev) {
-      added.push({
-        path: unit.path,
-        name: unit.name,
-        startLine: unit.startLine,
-        complexity: unit.complexity,
-      });
-      continue;
-    }
-    if (prev.complexity !== unit.complexity) {
-      changed.push({
-        path: unit.path,
-        name: unit.name,
-        startLine: unit.startLine,
-        before: prev.complexity,
-        after: unit.complexity,
-        delta: unit.complexity - prev.complexity,
-      });
-    }
-  }
-  for (const [key, unit] of beforeIndex) {
-    if (!afterIndex.has(key)) {
-      removed.push({
-        path: unit.path,
-        name: unit.name,
-        complexity: unit.complexity,
-      });
-    }
-  }
+  const added = collectAdded(afterIndex, beforeIndex);
+  const changed = collectChanged(afterIndex, beforeIndex);
+  const removed = collectRemoved(beforeIndex, afterIndex);
 
   added.sort(unitOrder);
   removed.sort(unitOrder);
@@ -85,6 +52,58 @@ export function diffComplexity(
   };
 }
 
+function collectAdded(
+  afterIndex: Map<string, ComplexityUnit>,
+  beforeIndex: Map<string, ComplexityUnit>,
+): DiffUnitAdded[] {
+  const added: DiffUnitAdded[] = [];
+  for (const [key, unit] of afterIndex) {
+    if (beforeIndex.has(key)) continue;
+    added.push({
+      path: unit.path,
+      name: unit.name,
+      startLine: unit.startLine,
+      complexity: unit.complexity,
+    });
+  }
+  return added;
+}
+
+function collectChanged(
+  afterIndex: Map<string, ComplexityUnit>,
+  beforeIndex: Map<string, ComplexityUnit>,
+): DiffUnitChanged[] {
+  const changed: DiffUnitChanged[] = [];
+  for (const [key, unit] of afterIndex) {
+    const prev = beforeIndex.get(key);
+    if (!prev || prev.complexity === unit.complexity) continue;
+    changed.push({
+      path: unit.path,
+      name: unit.name,
+      startLine: unit.startLine,
+      before: prev.complexity,
+      after: unit.complexity,
+      delta: unit.complexity - prev.complexity,
+    });
+  }
+  return changed;
+}
+
+function collectRemoved(
+  beforeIndex: Map<string, ComplexityUnit>,
+  afterIndex: Map<string, ComplexityUnit>,
+): DiffUnitRemoved[] {
+  const removed: DiffUnitRemoved[] = [];
+  for (const [key, unit] of beforeIndex) {
+    if (afterIndex.has(key)) continue;
+    removed.push({
+      path: unit.path,
+      name: unit.name,
+      complexity: unit.complexity,
+    });
+  }
+  return removed;
+}
 
 function keyedUnits(report: ComplexityReport): Map<string, ComplexityUnit> {
   const seen = new Map<string, number>();

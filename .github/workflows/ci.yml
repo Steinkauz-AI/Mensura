@@ -37,3 +37,6 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Mensura gates
+        run: node bin/mensura.mjs run --all --check

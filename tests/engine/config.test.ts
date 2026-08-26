@@ -68,6 +68,17 @@ describe("parseMensuraConfig", () => {
     });
   });
 
+  it("serializes grain-scoped skip paths for round-trip", async () => {
+    const { serializeMensuraConfig, parseMensuraConfig } = await import("../../src/core/config/index.js");
+    const config = parseMensuraConfig(
+      { skipPaths: [{ path: "packages/beta", grains: ["function"] }] },
+      "cfg",
+    );
+    const text = serializeMensuraConfig(config);
+    expect(text).toContain('"grains"');
+    expect(parseMensuraConfig(JSON.parse(text), "cfg").skipPaths).toEqual(config.skipPaths);
+  });
+
   it("normalizes separators, leading ./, and a trailing /** or /", () => {
     const { skipPaths } = parseMensuraConfig(
       {

@@ -160,33 +160,39 @@ describe("mensura TTY routing", () => {
     const root = await checkout({
       "src/a.ts": "export function simple() {\n  return 1;\n}\n",
     });
-    const tty = capture(true);
-    const piped = capture(false);
-    let ink = 0;
-    const options = {
-      runInkShell: async () => {
-        ink += 1;
-        return 0;
-      },
-    };
-    const args = ["run", "cyclomatic-complexity", "--no-save"];
-    const env = { NO_COLOR: "1" };
-    const ttyCode = await runMensuraCli(args, root, tty.stdout, tty.stderr, env, {
-      ...options,
-      isTTY: true,
-    });
-    const pipedCode = await runMensuraCli(args, root, piped.stdout, piped.stderr, env, {
-      ...options,
-      isTTY: false,
-    });
-    expect(ttyCode).toBe(0);
-    expect(pipedCode).toBe(0);
-    expect(ink).toBe(0);
-    expect(tty.out).toContain("simple");
-    expect(/\x1b\[/.test(tty.out)).toBe(false);
-    expect(stripTimestamp(tty.out)).toBe(stripTimestamp(piped.out));
+    await expectTtyMatchesPiped(["run", "cyclomatic-complexity", "--no-save"], root);
   });
 });
+
+async function expectTtyMatchesPiped(
+  args: string[],
+  root: string,
+  env: Record<string, string> = { NO_COLOR: "1" },
+): Promise<void> {
+  const tty = capture(true);
+  const piped = capture(false);
+  let ink = 0;
+  const options = {
+    runInkShell: async () => {
+      ink += 1;
+      return 0;
+    },
+  };
+  const ttyCode = await runMensuraCli(args, root, tty.stdout, tty.stderr, env, {
+    ...options,
+    isTTY: true,
+  });
+  const pipedCode = await runMensuraCli(args, root, piped.stdout, piped.stderr, env, {
+    ...options,
+    isTTY: false,
+  });
+  expect(ttyCode).toBe(0);
+  expect(pipedCode).toBe(0);
+  expect(ink).toBe(0);
+  expect(tty.out).toContain("simple");
+  expect(/\x1b\[/.test(tty.out)).toBe(false);
+  expect(stripTimestamp(tty.out)).toBe(stripTimestamp(piped.out));
+}
 
 function stripTimestamp(text: string): string {
   return text.replace(/^at\s+\S+$/m, "at  <ts>");

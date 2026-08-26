@@ -23,12 +23,28 @@ export async function hashMetricInputs(root: string): Promise<string> {
       ),
   );
   const hash = createHash("sha256");
+  await hashSourceFiles(hash, root, files);
+  await hashConfigFiles(hash, root);
+  return hash.digest("hex");
+}
+
+async function hashSourceFiles(
+  hash: ReturnType<typeof createHash>,
+  root: string,
+  files: string[],
+): Promise<void> {
   for (const abs of files) {
     hash.update(toPosix(relative(root, abs)));
     hash.update("\0");
     hash.update(await readFile(abs));
     hash.update("\0");
   }
+}
+
+async function hashConfigFiles(
+  hash: ReturnType<typeof createHash>,
+  root: string,
+): Promise<void> {
   for (const rel of ["package.json", `${MENSURA_DIR}/${MENSURA_CONFIG_FILE}`]) {
     try {
       hash.update(rel);
@@ -39,5 +55,4 @@ export async function hashMetricInputs(root: string): Promise<string> {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
   }
-  return hash.digest("hex");
 }

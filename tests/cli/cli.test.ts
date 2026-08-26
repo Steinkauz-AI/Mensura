@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { listMetrics, hashMetricInputs, ensureMensuraConfigFile } from "../../src/index.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import {
+  ensureBuiltinMetrics,
+  listMetrics,
+  hashMetricInputs,
+  ensureMensuraConfigFile,
+} from "../../src/index.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runMensuraCli } from "../../src/cli/cli.js";
@@ -7,6 +12,10 @@ import { capture, checkout, seedSnapshotStore, type Capture } from "./helpers.js
 
 const METRIC = "cyclomatic-complexity";
 const SIMPLE_TS = "export function simple() {\n  return 1;\n}\n";
+
+beforeAll(async () => {
+  await ensureBuiltinMetrics();
+});
 
 const FIXTURE: Record<string, string> = {
   "package.json": JSON.stringify({ name: "fixture", private: true }),
@@ -278,36 +287,11 @@ describe("mensura run --all", () => {
 });
 
 describe("mensura snapshot show and diff against a crafted store", () => {
-  async function seedStore(
-    root: string,
-    metric: string,
-    snapshots: Array<{ timestamp: string; inputsHash?: string }>,
-  ): Promise<void> {
-    const dir = join(root, ".mensura", "metrics", metric);
-    await mkdir(dir, { recursive: true });
-    const entries = [];
-    for (const snap of snapshots) {
-      const file = `${snap.timestamp.replaceAll(":", "-")}.json`;
-      const doc = {
-        schemaVersion: 1,
-        metric,
-        root,
-        timestamp: snap.timestamp,
-        ...(snap.inputsHash !== undefined ? { inputsHash: snap.inputsHash } : {}),
-        report: { units: [], files: [], unparsed: [] },
-      };
-      await writeFile(join(dir, file), `${JSON.stringify(doc)}\n`);
-      entries.push({ file, timestamp: snap.timestamp });
-    }
-    entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    await writeFile(join(dir, "manifest.json"), `${JSON.stringify(entries, null, 2)}\n`);
-  }
-
   it("diff omits the outdated note when both refs match the current inputs", async () => {
     const root = await checkout(FIXTURE);
     await ensureMensuraConfigFile(root);
     const hash = await hashMetricInputs(root);
-    await seedStore(root, METRIC, [
+    await seedSnapshotStore(root, METRIC, [
       { timestamp: "2026-08-24T10:00:00.000Z", inputsHash: hash },
       { timestamp: "2026-08-25T10:00:00.000Z", inputsHash: hash },
     ]);
@@ -319,7 +303,7 @@ describe("mensura snapshot show and diff against a crafted store", () => {
 
   it("show still labels a snapshot outdated when hashing the checkout fails", async () => {
     const root = await checkout({ ...FIXTURE, ".mensura/config.json": "{ not json" });
-    await seedStore(root, METRIC, [{ timestamp: "2026-08-25T10:00:00.000Z" }]);
+    await seedSnapshotStore(root, METRIC, [{ timestamp: "2026-08-25T10:00:00.000Z" }]);
     const result = await run(["snapshot", "show", METRIC, "latest"], root);
     expect(result.code).toBe(0);
     expect(result.out.startsWith("outdated\n")).toBe(true);

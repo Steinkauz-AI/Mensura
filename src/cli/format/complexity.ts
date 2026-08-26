@@ -53,7 +53,6 @@ export function sortUnitsByHeat(
   );
 }
 
-
 function heatOf(unit: ComplexityUnit, direction: MetricDirection): number {
   if (direction === "higher-better") return -unit.complexity;
   return unit.effort ?? unit.complexity;
@@ -111,37 +110,51 @@ export type SelectedComplexity = {
   score?: number;
 };
 
+type SelectOptions = {
+  top: number;
+  min?: number;
+  file?: string;
+  scale?: BandScale;
+  direction?: MetricDirection;
+};
 
-export function selectComplexity(
+function withScore(report: ComplexityReport): { score?: number } {
+  return report.score !== undefined ? { score: report.score } : {};
+}
+
+function passesMin(options: SelectOptions): (unit: ComplexityUnit) => boolean {
+  return (unit) => options.min === undefined || unit.complexity >= options.min;
+}
+
+function selectFileComplexity(
   report: ComplexityReport,
-  options: {
-    top: number;
-    min?: number;
-    file?: string;
-    scale?: BandScale;
-    direction?: MetricDirection;
-  },
+  filePath: string,
+  options: SelectOptions,
+  direction: MetricDirection,
+  scale: BandScale,
 ): SelectedComplexity {
-  const scale = options.scale ?? CYCLOMATIC_SCALE;
-  const direction = options.direction ?? "higher-worse";
-  const min = (unit: ComplexityUnit): boolean =>
-    options.min === undefined || unit.complexity >= options.min;
-  if (options.file !== undefined) {
-    const file = report.files.find((entry) => entry.path === options.file);
-    if (!file) throw new Error(`File not found in report: ${options.file}`);
-    const filtered = sortUnitsByHeat(unitsOf(report, options.file), direction).filter(min);
-    return {
-      selection: { kind: "file", file: options.file },
-      summary: summaryOf(report, scale),
-      units: filtered.slice(0, options.top),
-      files: [file],
-      unparsed: report.unparsed,
-      omittedUnits: Math.max(0, filtered.length - options.top),
-      omittedFiles: 0,
-      ...(report.score !== undefined ? { score: report.score } : {}),
-    };
-  }
-  const filteredUnits = sortUnitsByHeat(report.units, direction).filter(min);
+  const file = report.files.find((entry) => entry.path === filePath);
+  if (!file) throw new Error(`File not found in report: ${filePath}`);
+  const filtered = sortUnitsByHeat(unitsOf(report, filePath), direction).filter(passesMin(options));
+  return {
+    selection: { kind: "file", file: filePath },
+    summary: summaryOf(report, scale),
+    units: filtered.slice(0, options.top),
+    files: [file],
+    unparsed: report.unparsed,
+    omittedUnits: Math.max(0, filtered.length - options.top),
+    omittedFiles: 0,
+    ...withScore(report),
+  };
+}
+
+function selectOverviewComplexity(
+  report: ComplexityReport,
+  options: SelectOptions,
+  direction: MetricDirection,
+  scale: BandScale,
+): SelectedComplexity {
+  const filteredUnits = sortUnitsByHeat(report.units, direction).filter(passesMin(options));
   const sortedFiles = sortFilesByHeat(report.files, direction);
   return {
     selection: { kind: "overview" },
@@ -151,7 +164,50 @@ export function selectComplexity(
     unparsed: report.unparsed,
     omittedUnits: Math.max(0, filteredUnits.length - options.top),
     omittedFiles: Math.max(0, sortedFiles.length - options.top),
-    ...(report.score !== undefined ? { score: report.score } : {}),
+    ...withScore(report),
+  };
+}
+
+export function selectComplexity(
+  report: ComplexityReport,
+  options: SelectOptions,
+): SelectedComplexity {
+  const scale = options.scale ?? CYCLOMATIC_SCALE;
+  const direction = options.direction ?? "higher-worse";
+  if (options.file !== undefined) {
+    return selectFileComplexity(report, options.file, options, direction, scale);
+  }
+  return selectOverviewComplexity(report, options, direction, scale);
+}
+
+function emptyBands(scale: BandScale): Record<string, number> {
+  return Object.fromEntries(scale.bands.map((band) => [band, 0]));
+}
+
+function countBands(scores: number[], scale: BandScale): Record<string, number> {
+  const bands = emptyBands(scale);
+  for (const score of scores) bands[scale.bandOf(score)]! += 1;
+  return bands;
+}
+
+function medianOf(scores: number[]): number | null {
+  if (scores.length === 0) return null;
+  const mid = scores.length / 2;
+  if (scores.length % 2 === 1) return scores[Math.floor(mid)]!;
+  return round2((scores[mid - 1]! + scores[mid]!) / 2);
+}
+
+function extremes(scores: number[]): {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+} {
+  if (scores.length === 0) return { min: null, max: null, mean: null };
+  const total = scores.reduce((sum, n) => sum + n, 0);
+  return {
+    min: scores[0]!,
+    max: scores[scores.length - 1]!,
+    mean: round2(total / scores.length),
   };
 }
 
@@ -160,25 +216,15 @@ export function summaryOf(
   scale: BandScale = CYCLOMATIC_SCALE,
 ): ComplexitySummary {
   const scores = report.units.map((unit) => unit.complexity).sort((a, b) => a - b);
-  const bands: Record<string, number> = Object.fromEntries(
-    scale.bands.map((band) => [band, 0]),
-  );
-  for (const score of scores) bands[scale.bandOf(score)]! += 1;
-  const total = scores.reduce((sum, n) => sum + n, 0);
-  const mid = scores.length / 2;
+  const { min, max, mean } = extremes(scores);
   return {
     files: report.files.length,
     functions: scores.length,
-    min: scores.length > 0 ? scores[0]! : null,
-    max: scores.length > 0 ? scores[scores.length - 1]! : null,
-    mean: scores.length > 0 ? round2(total / scores.length) : null,
-    median:
-      scores.length === 0
-        ? null
-        : scores.length % 2 === 1
-          ? scores[Math.floor(mid)]!
-          : round2((scores[mid - 1]! + scores[mid]!) / 2),
-    bands,
+    min,
+    max,
+    mean,
+    median: medianOf(scores),
+    bands: countBands(scores, scale),
   };
 }
 
@@ -194,24 +240,14 @@ export type ComplexityViewOptions = {
   file?: string;
 };
 
+type PaintBand = (score: number, text: string) => string;
 
-export function formatComplexityView(
+function metaHeader(
   report: ComplexityReport,
   options: { root: string; at: Date } & ComplexityViewOptions,
-): string {
-  const scale = options.scale ?? CYCLOMATIC_SCALE;
-  const direction = options.direction ?? "higher-worse";
-  const paintBand = (score: number, text: string): string =>
-    paint(options.color, bandAnsi(scale, scale.bandOf(score)), text);
-  const selected = selectComplexity(report, {
-    top: options.top ?? DEFAULT_TOP,
-    min: options.min,
-    file: options.file,
-    scale,
-    direction,
-  });
-  const lines: string[] = [options.title ?? "Cyclomatic complexity"];
-  lines.push(
+): string[] {
+  return [
+    options.title ?? "Cyclomatic complexity",
     table(
       [
         ["root", options.root],
@@ -220,77 +256,179 @@ export function formatComplexityView(
       ],
       ["left", "left"],
     ),
+  ];
+}
+
+function paintedStat(value: number | null, paintBand: PaintBand): string {
+  return value === null ? "-" : paintBand(value, String(value));
+}
+
+function summaryStatTable(summary: ComplexitySummary, paintBand: PaintBand): string {
+  return table(
+    [
+      ["files", "functions", "min", "max", "mean", "median"],
+      [
+        String(summary.files),
+        String(summary.functions),
+        paintedStat(summary.min, paintBand),
+        paintedStat(summary.max, paintBand),
+        summary.mean === null ? "-" : String(summary.mean),
+        summary.median === null ? "-" : String(summary.median),
+      ],
+    ],
+    ["right", "right", "right", "right", "right", "right"],
   );
+}
+
+function bandCountTable(
+  summary: ComplexitySummary,
+  scale: BandScale,
+  color: boolean,
+): string {
+  return table(
+    [
+      ["band", "count"],
+      ...scale.bands.map((band) => [
+        paint(color, bandAnsi(scale, band), band),
+        String(summary.bands[band] ?? 0),
+      ]),
+    ],
+    ["left", "right"],
+  );
+}
+
+function hottestSection(
+  selected: SelectedComplexity,
+  direction: MetricDirection,
+  paintBand: PaintBand,
+): string[] {
+  if (selected.files.length === 0) return [];
+  return [
+    "",
+    "Hottest files",
+    hottestFilesTable(selected.files, direction, paintBand),
+    ...omittedLine(selected.omittedFiles),
+  ];
+}
+
+function unparsedSection(report: ComplexityReport): string[] {
+  if (report.unparsed.length === 0) return [];
+  return [
+    "",
+    "Unparseable files",
+    table(
+      [
+        ["count", "file"],
+        ...report.unparsed.map((file) => [String(file.errorCount), file.path]),
+      ],
+      ["right", "left"],
+    ),
+  ];
+}
+
+function fileViewBody(
+  selected: SelectedComplexity,
+  direction: MetricDirection,
+  paintBand: PaintBand,
+  metricId: string | undefined,
+): string[] {
+  const file = selected.files[0]!;
+  return [
+    "",
+    fileRollupTable(file, direction, paintBand),
+    ...unitTable(selected.units, paintBand, metricId),
+    ...omittedLine(selected.omittedUnits),
+  ];
+}
+
+function overviewViewBody(
+  selected: SelectedComplexity,
+  report: ComplexityReport,
+  scale: BandScale,
+  color: boolean,
+  direction: MetricDirection,
+  paintBand: PaintBand,
+  metricId: string | undefined,
+): string[] {
+  const summary = selected.summary;
+  return [
+    "",
+    summaryStatTable(summary, paintBand),
+    "",
+    bandCountTable(summary, scale, color),
+    ...unitTable(selected.units, paintBand, metricId),
+    ...omittedLine(selected.omittedUnits),
+    ...hottestSection(selected, direction, paintBand),
+    ...unparsedSection(report),
+  ];
+}
+
+function viewBody(
+  report: ComplexityReport,
+  selected: SelectedComplexity,
+  scale: BandScale,
+  color: boolean,
+  direction: MetricDirection,
+  paintBand: PaintBand,
+  metricId: string | undefined,
+): string[] {
   if (report.units.length === 0) {
-    lines.push("", "No TypeScript or JavaScript functions found.");
-  } else if (selected.selection.kind === "file") {
-    const file = selected.files[0]!;
-    lines.push("", fileRollupTable(file, direction, paintBand));
-    lines.push(...unitTable(selected.units, paintBand));
-    lines.push(...omittedLine(selected.omittedUnits));
-  } else {
-    const summary = selected.summary;
-    lines.push(
-      "",
-      table(
-        [
-          ["files", "functions", "min", "max", "mean", "median"],
-          [
-            String(summary.files),
-            String(summary.functions),
-            summary.min === null ? "-" : paintBand(summary.min, String(summary.min)),
-            summary.max === null ? "-" : paintBand(summary.max, String(summary.max)),
-            summary.mean === null ? "-" : String(summary.mean),
-            summary.median === null ? "-" : String(summary.median),
-          ],
-        ],
-        ["right", "right", "right", "right", "right", "right"],
-      ),
-      "",
-      table(
-        [
-          ["band", "count"],
-          ...scale.bands.map((band) => [
-            paint(options.color, bandAnsi(scale, band), band),
-            String(summary.bands[band] ?? 0),
-          ]),
-        ],
-        ["left", "right"],
-      ),
-    );
-    lines.push(...unitTable(selected.units, paintBand));
-    lines.push(...omittedLine(selected.omittedUnits));
-    if (selected.files.length > 0) {
-      lines.push("", "Hottest files", hottestFilesTable(selected.files, direction, paintBand));
-      lines.push(...omittedLine(selected.omittedFiles));
-    }
-    if (report.unparsed.length > 0) {
-      lines.push(
-        "",
-        "Unparseable files",
-        table(
-          [
-            ["count", "file"],
-            ...report.unparsed.map((file) => [String(file.errorCount), file.path]),
-          ],
-          ["right", "left"],
-        ),
-      );
-    }
+    return ["", "No TypeScript or JavaScript functions found."];
   }
-  if (options.metric) {
-    const catalog = checkGate(options.metric, options.config);
-    const { text } = formatCheck(report, {
-      gate: catalog.gate,
-      threshold: catalog.threshold,
-      color: options.color,
-      scale,
-      direction,
-    });
-    lines.push("", text);
+  if (selected.selection.kind === "file") {
+    return fileViewBody(selected, direction, paintBand, metricId);
   }
-  lines.push("", legend(scale, options.color));
-  return lines.join("\n");
+  return overviewViewBody(
+    selected,
+    report,
+    scale,
+    color,
+    direction,
+    paintBand,
+    metricId,
+  );
+}
+
+function gateFooter(
+  report: ComplexityReport,
+  options: ComplexityViewOptions,
+  scale: BandScale,
+  direction: MetricDirection,
+): string[] {
+  if (!options.metric) return [];
+  const catalog = checkGate(options.metric, options.config);
+  const { text } = formatCheck(report, {
+    gate: catalog.gate,
+    threshold: catalog.threshold,
+    color: options.color,
+    scale,
+    direction,
+  });
+  return ["", text];
+}
+
+export function formatComplexityView(
+  report: ComplexityReport,
+  options: { root: string; at: Date } & ComplexityViewOptions,
+): string {
+  const scale = options.scale ?? CYCLOMATIC_SCALE;
+  const direction = options.direction ?? "higher-worse";
+  const paintBand: PaintBand = (score, text) =>
+    paint(options.color, bandAnsi(scale, scale.bandOf(score)), text);
+  const selected = selectComplexity(report, {
+    top: options.top ?? DEFAULT_TOP,
+    min: options.min,
+    file: options.file,
+    scale,
+    direction,
+  });
+  return [
+    ...metaHeader(report, options),
+    ...viewBody(report, selected, scale, options.color, direction, paintBand, options.metric),
+    ...gateFooter(report, options, scale, direction),
+    "",
+    legend(scale, options.color),
+  ].join("\n");
 }
 
 function omittedLine(count: number): string[] {
@@ -300,7 +438,7 @@ function omittedLine(count: number): string[] {
 function fileRollupTable(
   file: FileComplexity,
   direction: MetricDirection,
-  paintBand: (score: number, text: string) => string,
+  paintBand: PaintBand,
 ): string {
   if (direction === "higher-better") {
     const mean = round2(fileMean(file));
@@ -334,7 +472,7 @@ function fileRollupTable(
 function hottestFilesTable(
   files: FileComplexity[],
   direction: MetricDirection,
-  paintBand: (score: number, text: string) => string,
+  paintBand: PaintBand,
 ): string {
   if (direction === "higher-better") {
     return table(
@@ -365,7 +503,6 @@ function hottestFilesTable(
 }
 
 type Align = "left" | "right";
-type PaintBand = (score: number, text: string) => string;
 
 type UnitLayout = {
   heading: string;
@@ -378,65 +515,68 @@ function location(unit: ComplexityUnit): string {
   return `${unit.path}:${unit.startLine}`;
 }
 
+function crapLayout(): UnitLayout {
+  return {
+    heading: "Functions",
+    header: ["crap", "cyclomatic", "coverage", "function", "location"],
+    align: ["right", "right", "right", "left", "left"],
+    row: (unit, paintBand) => [
+      paintBand(unit.complexity, String(unit.complexity)),
+      String(unit.cyclomatic ?? 0),
+      String(unit.coverage ?? 0),
+      unit.name,
+      location(unit),
+    ],
+  };
+}
 
-function unitLayout(units: ComplexityUnit[]): UnitLayout {
-  if (units.some((unit) => unit.coverage !== undefined)) {
-    return {
-      heading: "Functions",
-      header: ["crap", "cyclomatic", "coverage", "function", "location"],
-      align: ["right", "right", "right", "left", "left"],
-      row: (unit, paintBand) => [
-        paintBand(unit.complexity, String(unit.complexity)),
-        String(unit.cyclomatic ?? 0),
-        String(unit.coverage ?? 0),
-        unit.name,
-        location(unit),
-      ],
-    };
-  }
-  if (units.some((unit) => unit.loc !== undefined)) {
-    return {
-      heading: "Functions",
-      header: ["index", "volume", "cyclomatic", "loc", "function", "location"],
-      align: ["right", "right", "right", "right", "left", "left"],
-      row: (unit, paintBand) => [
-        paintBand(unit.complexity, String(unit.complexity)),
-        String(unit.volume ?? 0),
-        String(unit.cyclomatic ?? 0),
-        String(unit.loc ?? 0),
-        unit.name,
-        location(unit),
-      ],
-    };
-  }
-  if (units.some((unit) => unit.effort !== undefined)) {
-    return {
-      heading: "Functions",
-      header: ["volume", "difficulty", "effort", "function", "location"],
-      align: ["right", "right", "right", "left", "left"],
-      row: (unit, paintBand) => [
-        paintBand(unit.complexity, String(unit.complexity)),
-        String(unit.difficulty ?? 0),
-        String(unit.effort ?? 0),
-        unit.name,
-        location(unit),
-      ],
-    };
-  }
-  if (units.some((unit) => unit.ca !== undefined)) {
-    return {
-      heading: "Files",
-      header: ["ce", "ca", "I", "file", "location"],
-      align: ["right", "right", "right", "left", "left"],
-      row: (unit, paintBand) => [
-        paintBand(unit.complexity, String(unit.complexity)),
-        String(unit.ca ?? 0),
-        String(unit.instability ?? 0),
-        unit.name,
-        location(unit),
-      ],
-    };
-  }
+function maintainabilityLayout(): UnitLayout {
+  return {
+    heading: "Functions",
+    header: ["index", "volume", "cyclomatic", "loc", "function", "location"],
+    align: ["right", "right", "right", "right", "left", "left"],
+    row: (unit, paintBand) => [
+      paintBand(unit.complexity, String(unit.complexity)),
+      String(unit.volume ?? 0),
+      String(unit.cyclomatic ?? 0),
+      String(unit.loc ?? 0),
+      unit.name,
+      location(unit),
+    ],
+  };
+}
+
+function volumeLayout(): UnitLayout {
+  return {
+    heading: "Functions",
+    header: ["volume", "difficulty", "effort", "function", "location"],
+    align: ["right", "right", "right", "left", "left"],
+    row: (unit, paintBand) => [
+      paintBand(unit.complexity, String(unit.complexity)),
+      String(unit.difficulty ?? 0),
+      String(unit.effort ?? 0),
+      unit.name,
+      location(unit),
+    ],
+  };
+}
+
+function couplingLayout(): UnitLayout {
+  return {
+    heading: "Files",
+    header: ["ce", "ca", "I", "file", "location"],
+    align: ["right", "right", "right", "left", "left"],
+    row: (unit, paintBand) => [
+      paintBand(unit.complexity, String(unit.complexity)),
+      String(unit.ca ?? 0),
+      String(unit.instability ?? 0),
+      unit.name,
+      location(unit),
+    ],
+  };
+}
+
+function defaultLayout(units: ComplexityUnit[]): UnitLayout {
   return {
     heading: units.some((unit) => unit.kind === "file") ? "Files" : "Functions",
     header: ["score", "function", "location"],
@@ -449,9 +589,27 @@ function unitLayout(units: ComplexityUnit[]): UnitLayout {
   };
 }
 
-function unitTable(units: ComplexityUnit[], paintBand: PaintBand): string[] {
+const METRIC_LAYOUTS: Record<string, () => UnitLayout> = {
+  crap: crapLayout,
+  "maintainability-index": maintainabilityLayout,
+  halstead: volumeLayout,
+  coupling: couplingLayout,
+};
+
+function unitLayout(metricId: string | undefined, units: ComplexityUnit[]): UnitLayout {
+  if (metricId && METRIC_LAYOUTS[metricId]) {
+    return METRIC_LAYOUTS[metricId]();
+  }
+  return defaultLayout(units);
+}
+
+function unitTable(
+  units: ComplexityUnit[],
+  paintBand: PaintBand,
+  metricId: string | undefined,
+): string[] {
   if (units.length === 0) return ["", "No functions match."];
-  const layout = unitLayout(units);
+  const layout = unitLayout(metricId, units);
   return [
     "",
     layout.heading,
@@ -462,70 +620,151 @@ function unitTable(units: ComplexityUnit[], paintBand: PaintBand): string[] {
   ];
 }
 
+function diffChangedSection(
+  diff: ComplexityDiff,
+  color: boolean,
+  direction: MetricDirection,
+): string[] {
+  if (diff.changed.length === 0) return [];
+  return [
+    "",
+    "changed",
+    table(
+      [
+        ["score", "function", "location"],
+        ...diff.changed.map((entry) => [
+          paint(
+            color,
+            deltaColor(entry.delta, direction),
+            `${entry.before} → ${entry.after}`,
+          ),
+          entry.name,
+          `${entry.path}:${entry.startLine}`,
+        ]),
+      ],
+      ["right", "left", "left"],
+    ),
+  ];
+}
+
+function diffAddedSection(diff: ComplexityDiff): string[] {
+  if (diff.added.length === 0) return [];
+  return [
+    "",
+    "added",
+    table(
+      [
+        ["score", "function", "location"],
+        ...diff.added.map((entry) => [
+          String(entry.complexity),
+          entry.name,
+          `${entry.path}:${entry.startLine}`,
+        ]),
+      ],
+      ["right", "left", "left"],
+    ),
+  ];
+}
+
+function diffRemovedSection(diff: ComplexityDiff): string[] {
+  if (diff.removed.length === 0) return [];
+  return [
+    "",
+    "removed",
+    table(
+      [
+        ["score", "function"],
+        ...diff.removed.map((entry) => [String(entry.complexity), entry.name]),
+      ],
+      ["right", "left"],
+    ),
+  ];
+}
+
 export function formatComplexityDiff(
   diff: ComplexityDiff,
   options: { color: boolean; direction?: MetricDirection },
 ): string {
   const direction = options.direction ?? "higher-worse";
-  const lines: string[] = [
+  const empty =
+    diff.changed.length + diff.added.length + diff.removed.length === 0
+      ? ["", "No changes."]
+      : [];
+  return [
     "Complexity diff",
     `Δ total  ${paintDelta(diff.totalDelta, options.color, direction)}`,
+    ...empty,
+    ...diffChangedSection(diff, options.color, direction),
+    ...diffAddedSection(diff),
+    ...diffRemovedSection(diff),
+  ].join("\n");
+}
+
+function checkViolations(
+  report: ComplexityReport,
+  gate: "max" | "min",
+  threshold: number,
+  direction: MetricDirection,
+): ComplexityUnit[] {
+  return sortUnitsByHeat(report.units, direction).filter((unit) =>
+    gate === "min" ? unit.complexity < threshold : unit.complexity > threshold,
+  );
+}
+
+function checkViolationTable(
+  shown: ComplexityUnit[],
+  color: boolean,
+  scale: BandScale,
+): string {
+  return table(
+    [
+      ["score", "function", "location"],
+      ...shown.map((unit) => [
+        paint(
+          color,
+          bandAnsi(scale, scale.bandOf(unit.complexity)),
+          String(unit.complexity),
+        ),
+        unit.name,
+        `${unit.path}:${unit.startLine}`,
+      ]),
+    ],
+    ["right", "left", "left"],
+  );
+}
+
+function checkDirection(
+  gate: "max" | "min",
+  direction: MetricDirection | undefined,
+): MetricDirection {
+  return direction ?? (gate === "min" ? "higher-better" : "higher-worse");
+}
+
+function checkHeader(
+  report: ComplexityReport,
+  gate: "max" | "min",
+  threshold: number,
+  violations: ComplexityUnit[],
+): string[] {
+  const relation = gate === "min" ? "below" : "above";
+  return [
+    `threshold  ${gate} ${threshold}`,
+    `${violations.length} of ${report.units.length} functions ${relation} ${threshold}`,
   ];
-  if (diff.changed.length + diff.added.length + diff.removed.length === 0) {
-    lines.push("", "No changes.");
-  }
-  if (diff.changed.length > 0) {
-    lines.push(
-      "",
-      "changed",
-      table(
-        [
-          ["score", "function", "location"],
-          ...diff.changed.map((entry) => [
-            paint(
-              options.color,
-              deltaColor(entry.delta, direction),
-              `${entry.before} → ${entry.after}`,
-            ),
-            entry.name,
-            `${entry.path}:${entry.startLine}`,
-          ]),
-        ],
-        ["right", "left", "left"],
-      ),
-    );
-  }
-  if (diff.added.length > 0) {
-    lines.push(
-      "",
-      "added",
-      table(
-        [
-          ["score", "function", "location"],
-          ...diff.added.map((entry) => [
-            String(entry.complexity),
-            entry.name,
-            `${entry.path}:${entry.startLine}`,
-          ]),
-        ],
-        ["right", "left", "left"],
-      ),
-    );
-  }
-  if (diff.removed.length > 0) {
-    lines.push(
-      "",
-      "removed",
-      table(
-        [
-          ["score", "function"],
-          ...diff.removed.map((entry) => [String(entry.complexity), entry.name]),
-        ],
-        ["right", "left"],
-      ),
-    );
-  }
-  return lines.join("\n");
+}
+
+function checkShownLines(
+  violations: ComplexityUnit[],
+  shown: ComplexityUnit[],
+  color: boolean,
+  scale: BandScale,
+): string[] {
+  if (shown.length === 0) return [];
+  const extra =
+    violations.length > shown.length
+      ? [`…and ${violations.length - shown.length} more`]
+      : [];
+  return ["", checkViolationTable(shown, color, scale), ...extra];
 }
 
 export function formatCheck(
@@ -541,41 +780,13 @@ export function formatCheck(
 ): { text: string; violations: ComplexityUnit[] } {
   const scale = options.scale ?? CYCLOMATIC_SCALE;
   const limit = options.limit ?? CHECK_LIMIT;
-  const direction = options.direction ?? (options.gate === "min" ? "higher-better" : "higher-worse");
-  const violations = sortUnitsByHeat(report.units, direction).filter((unit) =>
-    options.gate === "min"
-      ? unit.complexity < options.threshold
-      : unit.complexity > options.threshold,
-  );
+  const direction = checkDirection(options.gate, options.direction);
+  const violations = checkViolations(report, options.gate, options.threshold, direction);
   const shown = violations.slice(0, limit);
-  const relation = options.gate === "min" ? "below" : "above";
-  const lines: string[] = [
-    `threshold  ${options.gate} ${options.threshold}`,
-    `${violations.length} of ${report.units.length} functions ${relation} ${options.threshold}`,
+  const lines = [
+    ...checkHeader(report, options.gate, options.threshold, violations),
+    ...checkShownLines(violations, shown, options.color, scale),
   ];
-  if (shown.length > 0) {
-    lines.push(
-      "",
-      table(
-        [
-          ["score", "function", "location"],
-          ...shown.map((unit) => [
-            paint(
-              options.color,
-              bandAnsi(scale, scale.bandOf(unit.complexity)),
-              String(unit.complexity),
-            ),
-            unit.name,
-            `${unit.path}:${unit.startLine}`,
-          ]),
-        ],
-        ["right", "left", "left"],
-      ),
-    );
-    if (violations.length > shown.length) {
-      lines.push(`…and ${violations.length - shown.length} more`);
-    }
-  }
   return { text: lines.join("\n"), violations };
 }
 

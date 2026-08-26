@@ -1,5 +1,6 @@
-import { ensureTestCoverage } from "../metrics/test-coverage/ensure.js";
+import { ensureBuiltinMetrics } from "./builtins.js";
 import { hashMetricInputs } from "./inputs.js";
+import { ensureTestCoverage } from "../metrics/test-coverage/ensure.js";
 import { getMetric, listMetrics, type AnyMetric } from "./registry.js";
 import {
   saveSnapshot,
@@ -29,10 +30,19 @@ export interface EvaluateMetricResult<TReport = unknown> {
   piggyback: PiggybackResult[];
 }
 
-export type PiggybackResult = {
+export type PiggybackSuccess = {
   id: string;
+  ok: true;
   result: EvaluateMetricResult<unknown>;
 };
+
+export type PiggybackFailure = {
+  id: string;
+  ok: false;
+  error: Error;
+};
+
+export type PiggybackResult = PiggybackSuccess | PiggybackFailure;
 
 
 export async function evaluateMetric<TReport>(
@@ -40,24 +50,50 @@ export async function evaluateMetric<TReport>(
   root: string,
   options?: EvaluateOptions,
 ): Promise<EvaluateMetricResult<TReport>> {
-  const save = options?.save ?? true;
-  const store: SnapshotStore = {
-    root,
-    metric: metric.id,
-    now: options?.now,
-    maxSnapshots: options?.maxSnapshots,
-  };
+  await ensureBuiltinMetrics();
+  const store = snapshotStoreFor(metric.id, root, options);
   const inputsHash = await hashMetricInputs(root);
   const current = await snapshotMatchingInputs<TReport>(store, inputsHash);
   if (current) {
-    return {
-      report: current.snapshot.report,
-      inputsHash,
-      reused: true,
-      snapshot: current,
-      piggyback: [],
-    };
+    return reusedResult(current, inputsHash);
   }
+  return analyzeAndMaybeSave(metric, root, store, inputsHash, options);
+}
+
+function snapshotStoreFor(
+  metricId: string,
+  root: string,
+  options: EvaluateOptions | undefined,
+): SnapshotStore {
+  return {
+    root,
+    metric: metricId,
+    now: options?.now,
+    maxSnapshots: options?.maxSnapshots,
+  };
+}
+
+function reusedResult<TReport>(
+  current: SavedSnapshot<TReport>,
+  inputsHash: string,
+): EvaluateMetricResult<TReport> {
+  return {
+    report: current.snapshot.report,
+    inputsHash,
+    reused: true,
+    snapshot: current,
+    piggyback: [],
+  };
+}
+
+async function analyzeAndMaybeSave<TReport>(
+  metric: AnyMetric,
+  root: string,
+  store: SnapshotStore,
+  inputsHash: string,
+  options: EvaluateOptions | undefined,
+): Promise<EvaluateMetricResult<TReport>> {
+  const save = options?.save ?? true;
   if (!options?.skipPrepare) {
     await metric.prepare?.(root);
   }
@@ -78,6 +114,30 @@ function coverageCohort(catalog: AnyMetric[]): AnyMetric[] {
   return catalog.filter((entry) => entry.prepare);
 }
 
+async function evaluatePiggybackSibling(
+  sibling: AnyMetric,
+  root: string,
+  inputsHash: string,
+  options: EvaluateOptions | undefined,
+  catalog: AnyMetric[],
+): Promise<PiggybackResult> {
+  try {
+    const result = await evaluateMetric(sibling, root, {
+      ...options,
+      save: true,
+      skipPrepare: true,
+      catalog,
+    });
+    return { id: sibling.id, ok: true, result };
+  } catch (err) {
+    return {
+      id: sibling.id,
+      ok: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
 async function piggybackCoverageSiblings(
   metric: AnyMetric,
   root: string,
@@ -96,17 +156,7 @@ async function piggybackCoverageSiblings(
       inputsHash,
     );
     if (alreadyCurrent) continue;
-    try {
-      const result = await evaluateMetric(sibling, root, {
-        ...options,
-        save: true,
-        skipPrepare: true,
-        catalog,
-      });
-      piggyback.push({ id: sibling.id, result });
-    } catch {
-      
-    }
+    piggyback.push(await evaluatePiggybackSibling(sibling, root, inputsHash, options, catalog));
   }
   return piggyback;
 }
@@ -125,54 +175,79 @@ export type EvaluateAllMetricOutcome<TReport = unknown> =
   | EvaluateAllMetricSuccess<TReport>
   | EvaluateAllMetricFailure;
 
+type CoveragePrepState = {
+  status: "pending" | "ready" | "failed";
+  error: Error | null;
+};
+
 
 export async function evaluateAllMetrics<TReport = unknown>(
   root: string,
   options?: { save?: boolean; now?: () => Date; maxSnapshots?: number },
 ): Promise<EvaluateAllMetricOutcome<TReport>[]> {
+  await ensureBuiltinMetrics();
   const metrics = listMetrics().map((entry) => getMetric(entry.id)!);
   const inputsHash = await hashMetricInputs(root);
-  let coverageState: "pending" | "ready" | "failed" = "pending";
-  let coverageError: Error | null = null;
-
+  const coverage: CoveragePrepState = { status: "pending", error: null };
   const outcomes: EvaluateAllMetricOutcome<TReport>[] = [];
   for (const metric of metrics) {
-    try {
-      let skipPrepare = false;
-      if (metric.prepare) {
-        const current = await snapshotMatchingInputs<TReport>(
-          { root, metric: metric.id },
-          inputsHash,
-        );
-        if (current) {
-          skipPrepare = true;
-        } else if (coverageState === "pending") {
-          try {
-            await ensureTestCoverage(root);
-            coverageState = "ready";
-            skipPrepare = true;
-          } catch (err) {
-            coverageState = "failed";
-            coverageError = err instanceof Error ? err : new Error(String(err));
-            throw coverageError;
-          }
-        } else if (coverageState === "ready") {
-          skipPrepare = true;
-        } else {
-          throw coverageError ?? new Error("Coverage preparation failed.");
-        }
-      }
-      const result = await evaluateMetric<TReport>(metric, root, {
-        ...options,
-        skipPrepare: metric.prepare !== undefined && skipPrepare,
-      });
-      outcomes.push({ metric, result });
-    } catch (err) {
-      outcomes.push({
-        metric,
-        error: err instanceof Error ? err : new Error(String(err)),
-      });
-    }
+    outcomes.push(await evaluateOneAllMetric(metric, root, inputsHash, coverage, options));
   }
   return outcomes;
+}
+
+async function evaluateOneAllMetric<TReport>(
+  metric: AnyMetric,
+  root: string,
+  inputsHash: string,
+  coverage: CoveragePrepState,
+  options: { save?: boolean; now?: () => Date; maxSnapshots?: number } | undefined,
+): Promise<EvaluateAllMetricOutcome<TReport>> {
+  try {
+    const skipPrepare = await resolveSkipPrepare(metric, root, inputsHash, coverage);
+    const result = await evaluateMetric<TReport>(metric, root, {
+      ...options,
+      skipPrepare: metric.prepare !== undefined && skipPrepare,
+    });
+    return { metric, result };
+  } catch (err) {
+    return {
+      metric,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
+async function resolveSkipPrepare(
+  metric: AnyMetric,
+  root: string,
+  inputsHash: string,
+  coverage: CoveragePrepState,
+): Promise<boolean> {
+  if (!metric.prepare) return false;
+  const current = await snapshotMatchingInputs(
+    { root, metric: metric.id },
+    inputsHash,
+  );
+  if (current) return true;
+  if (coverage.status === "pending") {
+    await runCoveragePrepare(root, coverage);
+    return true;
+  }
+  if (coverage.status === "ready") return true;
+  throw coverage.error ?? new Error("Coverage preparation failed.");
+}
+
+async function runCoveragePrepare(
+  root: string,
+  coverage: CoveragePrepState,
+): Promise<void> {
+  try {
+    await ensureTestCoverage(root);
+    coverage.status = "ready";
+  } catch (err) {
+    coverage.status = "failed";
+    coverage.error = err instanceof Error ? err : new Error(String(err));
+    throw coverage.error;
+  }
 }

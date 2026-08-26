@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { hashMetricInputs, listMetrics } from "../../src/index.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { ensureBuiltinMetrics, hashMetricInputs, listMetrics } from "../../src/index.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -12,6 +12,10 @@ import {
 import { checkout, seedSnapshotStore } from "./helpers.js";
 
 const METRIC = "cyclomatic-complexity";
+
+beforeAll(async () => {
+  await ensureBuiltinMetrics();
+});
 
 function unit(name: string, complexity: number) {
   return {

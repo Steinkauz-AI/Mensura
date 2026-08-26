@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
@@ -59,28 +60,56 @@ export async function listSourceFiles(
   let queue: string[] = [startDir];
   while (queue.length > 0) {
     const batch = queue.splice(0, WALK_CONCURRENCY);
-    const scanned = await Promise.all(
-      batch.map(async (dir) => {
-        const entries = await readdir(dir, { withFileTypes: true });
-        return [dir, entries] as const;
-      }),
-    );
-    const next: string[] = [];
-    for (const [dir, entries] of scanned) {
-      for (const entry of entries) {
-        const abs = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (!skipDirs.has(entry.name)) next.push(abs);
-          continue;
-        }
-        if (!entry.isFile() || !isSourceFileName(entry.name)) continue;
-        const rel = toPosix(relative(startDir, abs));
-        if (include && !include.includes(rel)) continue;
-        out.push(abs);
-      }
-    }
-    queue.push(...next);
+    const scanned = await readDirBatch(batch);
+    queue.push(...collectFromScanned(scanned, startDir, include, skipDirs, out));
   }
   out.sort();
   return out;
+}
+
+async function readDirBatch(
+  batch: string[],
+): Promise<readonly (readonly [string, Dirent[]])[]> {
+  return Promise.all(
+    batch.map(async (dir) => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return [dir, entries] as const;
+    }),
+  );
+}
+
+function collectFromScanned(
+  scanned: readonly (readonly [string, Dirent[]])[],
+  startDir: string,
+  include: string[] | undefined,
+  skipDirs: ReadonlySet<string>,
+  out: string[],
+): string[] {
+  const next: string[] = [];
+  for (const [dir, entries] of scanned) {
+    for (const entry of entries) {
+      considerEntry(dir, entry, startDir, include, skipDirs, out, next);
+    }
+  }
+  return next;
+}
+
+function considerEntry(
+  dir: string,
+  entry: Dirent,
+  startDir: string,
+  include: string[] | undefined,
+  skipDirs: ReadonlySet<string>,
+  out: string[],
+  next: string[],
+): void {
+  const abs = join(dir, entry.name);
+  if (entry.isDirectory()) {
+    if (!skipDirs.has(entry.name)) next.push(abs);
+    return;
+  }
+  if (!entry.isFile() || !isSourceFileName(entry.name)) return;
+  const rel = toPosix(relative(startDir, abs));
+  if (include && !include.includes(rel)) return;
+  out.push(abs);
 }

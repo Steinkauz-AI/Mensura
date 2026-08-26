@@ -48,26 +48,54 @@ async function nearestPackageDir(
   let dir = startDir === "." ? "" : startDir;
   const chain: string[] = [];
   while (true) {
-    if (cache.has(dir)) {
-      const hit = cache.get(dir);
-      for (const step of chain) cache.set(step, hit);
-      return hit;
-    }
+    const cached = cachedPackageDir(dir, chain, cache);
+    if (cached.hit) return cached.value;
     chain.push(dir);
-    try {
-      await readFile(join(root, dir, "package.json"), "utf8");
-      for (const step of chain) cache.set(step, dir);
+    const found = await tryPackageAt(root, dir);
+    if (found) {
+      fillCache(chain, dir, cache);
       return dir;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
     if (dir === "") {
-      for (const step of chain) cache.set(step, undefined);
+      fillCache(chain, undefined, cache);
       return undefined;
     }
-    dir = posix.dirname(dir);
-    if (dir === ".") dir = "";
+    dir = parentDir(dir);
   }
+}
+
+function cachedPackageDir(
+  dir: string,
+  chain: string[],
+  cache: Map<string, string | undefined>,
+): { hit: true; value: string | undefined } | { hit: false } {
+  if (!cache.has(dir)) return { hit: false };
+  const value = cache.get(dir);
+  fillCache(chain, value, cache);
+  return { hit: true, value };
+}
+
+async function tryPackageAt(root: string, dir: string): Promise<boolean> {
+  try {
+    await readFile(join(root, dir, "package.json"), "utf8");
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return false;
+  }
+}
+
+function fillCache(
+  chain: string[],
+  value: string | undefined,
+  cache: Map<string, string | undefined>,
+): void {
+  for (const step of chain) cache.set(step, value);
+}
+
+function parentDir(dir: string): string {
+  const next = posix.dirname(dir);
+  return next === "." ? "" : next;
 }
 
 async function readPackage(
