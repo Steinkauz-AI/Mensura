@@ -306,6 +306,25 @@ describe("analyzeEncapsulation", () => {
     expect(unitAt(report.units, "apps/app/src/main.ts").complexity).toBe(0);
   });
 
+  it("counts a deep import as a leak when exports expose no source file", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { ok } from "@x/lib/src/index.js";\nexport const n = ok;\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: { "./styles": "./src/styles.css" },
+      }),
+      "packages/lib/src/index.ts": `export const ok = 1;\n`,
+      "packages/lib/src/styles.css": `body { color: red; }\n`,
+    });
+    const graph = await buildImportGraph(root);
+    expect(graph.edges).toEqual([
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/index.ts", kind: "value" },
+    ]);
+    const report = await analyzeEncapsulation(root);
+    expect(unitAt(report.units, "packages/lib/src/index.ts").complexity).toBe(1);
+  });
+
   it("does not treat an exports-mapped root or subpath import as a leak", async () => {
     const root = await checkoutWith({
       "apps/app/package.json": JSON.stringify({ name: "@x/app" }),

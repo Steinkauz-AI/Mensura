@@ -117,8 +117,10 @@ function publicEntryFiles(
 ): string[] {
   const resolved = new Set<string>();
   const fromExports = subpathExports(pkg.exports);
-  if (fromExports) collectExportFiles(fromExports.values(), dir, files, resolved);
-  if (resolved.size > 0) return [...resolved].sort();
+  if (Object.hasOwn(pkg, "exports")) {
+    if (fromExports) collectExportFiles(fromExports.values(), dir, files, resolved);
+    return [...resolved].sort();
+  }
   const entry = resolvePackageEntry(dir, files);
   return entry ? [entry] : [];
 }
