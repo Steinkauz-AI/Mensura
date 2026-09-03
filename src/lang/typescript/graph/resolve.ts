@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { exportTargetsForPackage } from "./exports.js";
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 
@@ -15,6 +16,7 @@ export function resolveSpecifier(
   specifier: string,
   files: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
+  packageExports?: ReadonlyMap<string, unknown>,
 ): string | undefined {
   if (specifier.startsWith(".")) {
     return resolveRelative(posix.dirname(fromPath), specifier, files);
@@ -23,6 +25,12 @@ export function resolveSpecifier(
   if (!bare) return undefined;
   const pkgDir = packagesByName.get(bare.name);
   if (pkgDir === undefined) return undefined;
+  const rawTargets = exportTargetsForPackage(packageExports, bare.name, bare.subpath);
+  if (rawTargets !== undefined) {
+    const hit = firstResolvedExport(pkgDir, rawTargets, files);
+    if (hit) return hit;
+    if (rawTargets.length > 0) return undefined;
+  }
   if (bare.subpath === "") {
     return resolvePackageEntry(pkgDir, files);
   }
@@ -55,6 +63,38 @@ export function resolvePackageEntry(
     if (hit) return hit;
   }
   return undefined;
+}
+
+export function resolveExportFile(
+  pkgDir: string,
+  target: string,
+  files: ReadonlySet<string>,
+): string | undefined {
+  if (!target.startsWith("./")) return undefined;
+  return resolveRelative(pkgDir, target, files) ?? resolveDistToSrc(pkgDir, target, files);
+}
+
+function firstResolvedExport(
+  pkgDir: string,
+  targets: readonly string[],
+  files: ReadonlySet<string>,
+): string | undefined {
+  for (const target of targets) {
+    const hit = resolveExportFile(pkgDir, target, files);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function resolveDistToSrc(
+  pkgDir: string,
+  target: string,
+  files: ReadonlySet<string>,
+): string | undefined {
+  const cleaned = target.replace(/^\.\//, "");
+  const rewritten = cleaned.replace(/(^|\/)dist\//, "$1src/").replace(/\.js$/, ".ts");
+  const path = pkgDir === "" ? rewritten : posix.join(pkgDir, rewritten);
+  return files.has(path) ? path : undefined;
 }
 
 function resolveRelative(

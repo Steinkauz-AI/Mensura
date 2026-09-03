@@ -75,6 +75,82 @@ describe("import graph", () => {
     ]);
   });
 
+  it("resolves package root and subpaths through their exports entries", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { rootValue } from "@x/lib";\nimport { featureValue } from "@x/lib/feature";\nexport const value = rootValue + featureValue;\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: {
+          ".": "./src/root.ts",
+          "./feature": "./src/feature.ts",
+        },
+      }),
+      "packages/lib/src/root.ts": `export const rootValue = 1;\n`,
+      "packages/lib/src/feature.ts": `export const featureValue = 2;\n`,
+    });
+    const graph = await buildImportGraph(root);
+    expect(graph.edges).toEqual([
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/feature.ts", kind: "value" },
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/root.ts", kind: "value" },
+    ]);
+  });
+
+  it("resolves nested conditional export targets", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { rootValue } from "@x/lib";\nimport { featureValue } from "@x/lib/feature";\nexport const value = rootValue + featureValue;\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: {
+          ".": { import: "./dist/bundle.js", default: "./src/root.ts" },
+          "./feature": { node: { import: "./src/feature.ts" } },
+        },
+      }),
+      "packages/lib/src/root.ts": `export const rootValue = 1;\n`,
+      "packages/lib/src/feature.ts": `export const featureValue = 2;\n`,
+    });
+    const graph = await buildImportGraph(root);
+    expect(graph.edges).toEqual([
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/feature.ts", kind: "value" },
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/root.ts", kind: "value" },
+    ]);
+  });
+
+  it("ignores export targets that do not resolve to a supported source file", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { a } from "@x/lib";\nimport { b } from "@x/lib/styles";\nexport const v = [a, b];\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: {
+          ".": "./dist/bundle.js",
+          "./styles": "./src/styles.css",
+        },
+      }),
+      "packages/lib/src/other.ts": `export const o = 1;\n`,
+    });
+    const graph = await buildImportGraph(root);
+    expect(graph.edges).toEqual([]);
+  });
+
+  it("keeps resolving physical deep imports when an exports map exists", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { secret } from "@x/lib/src/internal.js";\nexport const n = secret;\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: { ".": "./src/root.ts" },
+      }),
+      "packages/lib/src/root.ts": `export const rootValue = 1;\n`,
+      "packages/lib/src/internal.ts": `export const secret = 2;\n`,
+    });
+    const graph = await buildImportGraph(root);
+    expect(graph.edges).toEqual([
+      { from: "apps/app/src/main.ts", to: "packages/lib/src/internal.ts", kind: "value" },
+    ]);
+  });
+
   it("records export-from as a value edge and export-type-from as a type edge", async () => {
     const root = await checkoutWith({
       "src/a.ts": `export { b } from "./b.js";\nexport type { B } from "./types.js";\n`,
@@ -227,6 +303,26 @@ describe("analyzeEncapsulation", () => {
     });
     const report = await analyzeEncapsulation(root);
     expect(unitAt(report.units, "packages/lib/src/index.ts").complexity).toBe(0);
+    expect(unitAt(report.units, "apps/app/src/main.ts").complexity).toBe(0);
+  });
+
+  it("does not treat an exports-mapped root or subpath import as a leak", async () => {
+    const root = await checkoutWith({
+      "apps/app/package.json": JSON.stringify({ name: "@x/app" }),
+      "apps/app/src/main.ts": `import { rootValue } from "@x/lib";\nimport { featureValue } from "@x/lib/feature";\nexport const value = rootValue + featureValue;\n`,
+      "packages/lib/package.json": JSON.stringify({
+        name: "@x/lib",
+        exports: {
+          ".": "./src/root.ts",
+          "./feature": "./src/feature.ts",
+        },
+      }),
+      "packages/lib/src/root.ts": `export const rootValue = 1;\n`,
+      "packages/lib/src/feature.ts": `export const featureValue = 2;\n`,
+    });
+    const report = await analyzeEncapsulation(root);
+    expect(unitAt(report.units, "packages/lib/src/root.ts").complexity).toBe(0);
+    expect(unitAt(report.units, "packages/lib/src/feature.ts").complexity).toBe(0);
     expect(unitAt(report.units, "apps/app/src/main.ts").complexity).toBe(0);
   });
 });

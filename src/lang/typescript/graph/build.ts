@@ -22,6 +22,7 @@ export async function buildImportGraph(
   const fileSet = new Set(production.paths);
   const packages = await loadWorkspacePackages(root, production.paths, fileSet);
   const packagesByName = new Map(packages.map((pkg) => [pkg.name, pkg.dir]));
+  const packageExports = new Map(packages.map((pkg) => [pkg.name, pkg.exports]));
   const nodes: ImportNode[] = production.paths.map((path) => ({
     path,
     packageDir: packageDirOf(path, packages),
@@ -32,6 +33,7 @@ export async function buildImportGraph(
     production.absByPath,
     fileSet,
     packagesByName,
+    packageExports,
   );
   edges.sort(
     (a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.kind.localeCompare(b.kind),
@@ -69,6 +71,7 @@ async function collectEdges(
   absByPath: Map<string, string>,
   fileSet: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
+  packageExports: ReadonlyMap<string, unknown>,
 ): Promise<{ edges: ImportEdge[]; unparsed: ImportGraph["unparsed"] }> {
   const edgeKey = new Set<string>();
   const edges: ImportEdge[] = [];
@@ -80,6 +83,7 @@ async function collectEdges(
       absByPath,
       fileSet,
       packagesByName,
+      packageExports,
       edgeKey,
       edges,
       unparsed,
@@ -94,6 +98,7 @@ async function collectFileEdges(
   absByPath: Map<string, string>,
   fileSet: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
+  packageExports: ReadonlyMap<string, unknown>,
   edgeKey: Set<string>,
   edges: ImportEdge[],
   unparsed: ImportGraph["unparsed"],
@@ -105,7 +110,7 @@ async function collectFileEdges(
     (source as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics?.length ?? 0;
   if (parseErrorCount > 0) unparsed.push({ path, errorCount: parseErrorCount });
   for (const spec of specifiersInFile(source)) {
-    addEdge(path, spec.specifier, spec.typeOnly, fileSet, packagesByName, edgeKey, edges);
+    addEdge(path, spec.specifier, spec.typeOnly, fileSet, packagesByName, packageExports, edgeKey, edges);
   }
 }
 
@@ -115,10 +120,11 @@ function addEdge(
   typeOnly: boolean,
   fileSet: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
+  packageExports: ReadonlyMap<string, unknown>,
   edgeKey: Set<string>,
   edges: ImportEdge[],
 ): void {
-  const to = resolveSpecifier(from, specifier, fileSet, packagesByName);
+  const to = resolveSpecifier(from, specifier, fileSet, packagesByName, packageExports);
   if (!to || to === from) return;
   const kind = typeOnly ? "type" : "value";
   const key = `${from}\0${to}\0${kind}`;

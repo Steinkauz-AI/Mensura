@@ -1,6 +1,6 @@
 # `encapsulation`
 
-Count of inbound **leaked** imports: another package imports this file other than through that package’s declared interface (`package.json` `"exports"` if present, else `src/index.ts` / `index.ts`). Same-package edges are not leaks. A checkout with a single package has no leaks.
+Count of inbound **leaked** imports: another package imports this file other than through that package’s declared interface (`package.json` `"exports"` if present, else `src/index.ts` / `index.ts`). Export entries use the same interpretation as import resolution (exact `"."` / `"./subpath"` keys, nested `import`/`default` conditional targets, `dist` targets mapped back to their `src` source twin). Same-package edges are not leaks. A checkout with a single package has no leaks.
 
 - **Grain:** structure
 - **Direction:** higher-worse
