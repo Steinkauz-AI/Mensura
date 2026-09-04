@@ -35,6 +35,10 @@ TypeScript and JavaScript, parsed with the compiler API (syntax only; the target
 - **Status / input hash:** all-grains rules also leave their files out of the scored-input hash; grain-scoped rules keep their files hashed (any config edit still invalidates every snapshot either way).
 - **Downgrades:** older CLIs ignore unknown config keys, so a downgrade silently stops honoring `skipPaths` or `metrics` overrides.
 
+### Snapshot retention (`maxSnapshots`)
+
+Optional top-level positive integer (default 20). Caps how many snapshot files each metric keeps under `.mensura/metrics/<id>/`. Eviction runs on the next save only; loading config or checking status does not prune. Non-integers and values below 1 fail at parse.
+
 ### Thresholds and bands (`metrics`)
 
 Per-metric check bars and display bands live under `metrics` in the same file. CLI usage writes catalog defaults into `.mensura/config.json` when the file is missing (`mensura completion` does not). Missing keys keep those defaults.
@@ -72,7 +76,7 @@ Scored inputs are walked source files, root `package.json`, and `.mensura/config
 
 ## Snapshots
 
-Compact JSON under `<checkout>/.mensura/metrics/<metric>/` with a per-metric `manifest.json` (`latest` / `previous` / file name / timestamp). Retention: 20 newest. Atomic writes. `evaluateMetric` reuses any Snapshot whose scored-input hash matches (a Current Snapshot), not only latest. `latest` remains newest-on-disk. `checkoutStatus` reports per-metric status (`up-to-date` / `outdated` / `missing`).
+Compact JSON under `<checkout>/.mensura/metrics/<metric>/` with a per-metric `manifest.json` (`latest` / `previous` / file name / timestamp). Retention: newest `maxSnapshots` from `.mensura/config.json` (default 20; positive integer, no upper bound). Eviction runs on save only. Atomic writes. `evaluateMetric` reuses any Snapshot whose scored-input hash matches (a Current Snapshot), not only latest. `latest` remains newest-on-disk. `checkoutStatus` reports per-metric status (`up-to-date` / `outdated` / `missing`).
 
 ### Coverage piggyback
 

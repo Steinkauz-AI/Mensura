@@ -1,4 +1,5 @@
 import { ensureBuiltinMetrics } from "./builtins.js";
+import { loadMensuraConfig } from "./config/index.js";
 import { hashMetricInputs } from "./inputs.js";
 import { ensureTestCoverage } from "../metrics/test-coverage/ensure.js";
 import { getMetric, listMetrics, type AnyMetric } from "./registry.js";
@@ -51,13 +52,23 @@ export async function evaluateMetric<TReport>(
   options?: EvaluateOptions,
 ): Promise<EvaluateMetricResult<TReport>> {
   await ensureBuiltinMetrics();
-  const store = snapshotStoreFor(metric.id, root, options);
+  const resolved = await resolveEvaluateOptions(root, options);
+  const store = snapshotStoreFor(metric.id, root, resolved);
   const inputsHash = await hashMetricInputs(root);
   const current = await snapshotMatchingInputs<TReport>(store, inputsHash);
   if (current) {
     return reusedResult(current, inputsHash);
   }
-  return analyzeAndMaybeSave(metric, root, store, inputsHash, options);
+  return analyzeAndMaybeSave(metric, root, store, inputsHash, resolved);
+}
+
+async function resolveEvaluateOptions(
+  root: string,
+  options: EvaluateOptions | undefined,
+): Promise<EvaluateOptions> {
+  if (options?.maxSnapshots !== undefined) return options;
+  const config = await loadMensuraConfig(root);
+  return { ...options, maxSnapshots: config.maxSnapshots };
 }
 
 function snapshotStoreFor(

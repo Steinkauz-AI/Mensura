@@ -1,9 +1,9 @@
 import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { MENSURA_DIR } from "./config/index.js";
+import { DEFAULT_MAX_SNAPSHOTS, MENSURA_DIR } from "./config/index.js";
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
-export const DEFAULT_MAX_SNAPSHOTS = 20;
+export { DEFAULT_MAX_SNAPSHOTS };
 const MANIFEST_FILE = "manifest.json";
 
 export type Snapshot<TReport = unknown> = {

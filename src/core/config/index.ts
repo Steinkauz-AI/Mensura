@@ -1,6 +1,7 @@
 export {
   MENSURA_CONFIG_FILE,
   MENSURA_DIR,
+  DEFAULT_MAX_SNAPSHOTS,
   parseMensuraConfig,
   serializeMensuraConfig,
   defaultMensuraConfig,

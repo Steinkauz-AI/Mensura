@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  DEFAULT_MAX_SNAPSHOTS,
   defaultMensuraConfig,
   MENSURA_CONFIG_FILE,
   MENSURA_DIR,
@@ -12,6 +13,7 @@ import {
 export {
   MENSURA_CONFIG_FILE,
   MENSURA_DIR,
+  DEFAULT_MAX_SNAPSHOTS,
   parseMensuraConfig,
   serializeMensuraConfig,
   defaultMensuraConfig,

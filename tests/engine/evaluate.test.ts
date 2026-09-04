@@ -171,6 +171,44 @@ describe("evaluateMetric", () => {
     expect(await listSnapshots({ root, metric: metric.id })).toHaveLength(2);
   });
 
+  it("evicts older snapshots using maxSnapshots from config", async () => {
+    const root = await checkoutWith({
+      "src/a.ts": "export function a() { return 1; }\n",
+      ".mensura/config.json": JSON.stringify({ maxSnapshots: 2 }),
+    });
+    const metric = stubMetric();
+    const base = new Date("2026-08-20T10:00:00.000Z").getTime();
+    for (let i = 0; i < 3; i++) {
+      await writeFile(join(root, "src", "a.ts"), `export function a() { return ${i}; }\n`);
+      await evaluateMetric(metric, root, {
+        now: () => new Date(base + i * 60_000),
+      });
+    }
+    const listing = await listSnapshots({ root, metric: metric.id });
+    expect(listing).toHaveLength(2);
+    expect(listing.map((meta) => meta.timestamp)).toEqual([
+      "2026-08-20T10:02:00.000Z",
+      "2026-08-20T10:01:00.000Z",
+    ]);
+  });
+
+  it("prefers an explicit maxSnapshots option over config", async () => {
+    const root = await checkoutWith({
+      "src/a.ts": "export function a() { return 1; }\n",
+      ".mensura/config.json": JSON.stringify({ maxSnapshots: 10 }),
+    });
+    const metric = stubMetric();
+    const base = new Date("2026-08-20T10:00:00.000Z").getTime();
+    for (let i = 0; i < 3; i++) {
+      await writeFile(join(root, "src", "a.ts"), `export function a() { return ${i}; }\n`);
+      await evaluateMetric(metric, root, {
+        maxSnapshots: 1,
+        now: () => new Date(base + i * 60_000),
+      });
+    }
+    expect(await listSnapshots({ root, metric: metric.id })).toHaveLength(1);
+  });
+
   it("runs prepare on a cache miss and skips it on a hit", async () => {
     const root = await checkoutWith({
       "src/a.ts": "export function a() { return 1; }\n",
