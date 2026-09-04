@@ -10,6 +10,7 @@ describe("parseMensuraConfig", () => {
     const config = parseMensuraConfig({}, ".mensura/config.json");
     expect(config.skipDirectories).toEqual([]);
     expect(config.skipPaths).toEqual([]);
+    expect(config.maxSnapshots).toBe(20);
     expect(config.metrics["cyclomatic-complexity"]).toEqual({
       threshold: 20,
       bands: {
@@ -18,6 +19,30 @@ describe("parseMensuraConfig", () => {
       },
     });
     expect(config.metrics["test-coverage"]?.threshold).toBe(50);
+  });
+
+  it("reads maxSnapshots when set", () => {
+    expect(
+      parseMensuraConfig({ maxSnapshots: 5 }, ".mensura/config.json").maxSnapshots,
+    ).toBe(5);
+  });
+
+  it("rejects non-integer and sub-one maxSnapshots", () => {
+    expect(() =>
+      parseMensuraConfig({ maxSnapshots: 1.5 }, "cfg"),
+    ).toThrow(/maxSnapshots must be an integer >= 1/);
+    expect(() =>
+      parseMensuraConfig({ maxSnapshots: 0 }, "cfg"),
+    ).toThrow(/maxSnapshots must be an integer >= 1/);
+    expect(() =>
+      parseMensuraConfig({ maxSnapshots: -3 }, "cfg"),
+    ).toThrow(/maxSnapshots must be an integer >= 1/);
+    expect(() =>
+      parseMensuraConfig({ maxSnapshots: "20" }, "cfg"),
+    ).toThrow(/maxSnapshots must be an integer >= 1/);
+    expect(() =>
+      parseMensuraConfig({ maxSnapshots: NaN }, "cfg"),
+    ).toThrow(/maxSnapshots must be an integer >= 1/);
   });
 
   it("reads skipDirectories", () => {
@@ -77,6 +102,14 @@ describe("parseMensuraConfig", () => {
     const text = serializeMensuraConfig(config);
     expect(text).toContain('"grains"');
     expect(parseMensuraConfig(JSON.parse(text), "cfg").skipPaths).toEqual(config.skipPaths);
+  });
+
+  it("serializes maxSnapshots for round-trip", async () => {
+    const { serializeMensuraConfig, parseMensuraConfig } = await import("../../src/core/config/index.js");
+    const config = parseMensuraConfig({ maxSnapshots: 7 }, "cfg");
+    const text = serializeMensuraConfig(config);
+    expect(JSON.parse(text).maxSnapshots).toBe(7);
+    expect(parseMensuraConfig(JSON.parse(text), "cfg").maxSnapshots).toBe(7);
   });
 
   it("normalizes separators, leading ./, and a trailing /** or /", () => {

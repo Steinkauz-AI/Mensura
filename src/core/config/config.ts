@@ -12,6 +12,7 @@ import {
 
 export const MENSURA_DIR = ".mensura";
 export const MENSURA_CONFIG_FILE = "config.json";
+export const DEFAULT_MAX_SNAPSHOTS = 20;
 
 export type MetricGrain = "function" | "structure";
 
@@ -23,6 +24,7 @@ export type SkipPathRule = {
 export type MensuraConfig = {
   skipDirectories: string[];
   skipPaths: SkipPathRule[];
+  maxSnapshots: number;
   metrics: MetricCatalog;
 };
 
@@ -33,6 +35,7 @@ export function defaultMensuraConfig(): MensuraConfig {
   return {
     skipDirectories: [],
     skipPaths: [],
+    maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
     metrics: defaultMetricCatalog(),
   };
 }
@@ -42,6 +45,7 @@ export function serializeMensuraConfig(config: MensuraConfig): string {
     {
       skipDirectories: config.skipDirectories,
       skipPaths: config.skipPaths.map(serializeSkipPath),
+      maxSnapshots: config.maxSnapshots,
       metrics: Object.fromEntries(
         Object.entries(config.metrics).map(([id, settings]) => [
           id,
@@ -113,11 +117,23 @@ export function parseMensuraConfig(
     }
     skipPaths = rawSkipPaths.map((entry) => parseSkipPathEntry(entry, source));
   }
+  const maxSnapshots = parseMaxSnapshots(
+    (raw as { maxSnapshots?: unknown }).maxSnapshots,
+    source,
+  );
   const metrics = parseMetrics(
     (raw as { metrics?: unknown }).metrics,
     source,
   );
-  return { skipDirectories, skipPaths, metrics };
+  return { skipDirectories, skipPaths, maxSnapshots, metrics };
+}
+
+function parseMaxSnapshots(raw: unknown, source: string): number {
+  if (raw === undefined) return DEFAULT_MAX_SNAPSHOTS;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+    throw new Error(`${source}: maxSnapshots must be an integer >= 1`);
+  }
+  return raw;
 }
 
 function parseMetrics(raw: unknown, source: string): MetricCatalog {
