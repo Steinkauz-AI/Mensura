@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import ts from "typescript";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +10,7 @@ import { analyzeCycles } from "../../src/metrics/cycles/index.js";
 const dirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -128,10 +130,47 @@ describe("project path aliases", () => {
     ]);
   });
 
+  it.each(["./missing.json", "@tsconfig/node20/tsconfig.json", "next/tsconfig.json"])(
+    "uses no aliases when an extends target is absent (%s)", async (base) => {
+      const root = await checkoutWith({
+        "tsconfig.json": JSON.stringify({ extends: base, compilerOptions: {
+          baseUrl: ".", paths: { "@/*": ["./src/*"] },
+        } }),
+        "main.ts": 'import "@/value"; import "src/direct"; import "./relative";',
+        "src/value.ts": "export {};",
+        "src/direct.ts": "export {};",
+        "relative.ts": "export {};",
+      });
+      await expect(hashMetricInputs(root)).resolves.toMatch(/^[a-f0-9]{64}$/);
+      expect((await buildImportGraph(root)).edges).toEqual([
+        { from: "main.ts", to: "relative.ts", kind: "value" },
+      ]);
+    },
+  );
+
+  it("uses no aliases when an extends target exists but cannot be read", async () => {
+    const root = await checkoutWith({
+      "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: {
+        paths: { "@/*": ["./src/*"] },
+      } }),
+      "base.json": "{}",
+      "main.ts": 'import "@/value";',
+      "src/value.ts": "export {};",
+    });
+    const readFile = ts.sys.readFile;
+    vi.spyOn(ts.sys, "readFile").mockImplementation((path, encoding) =>
+      path.replaceAll("\\", "/").endsWith("/base.json") ? undefined : readFile(path, encoding),
+    );
+    await expect(hashMetricInputs(root)).resolves.toMatch(/^[a-f0-9]{64}$/);
+    expect((await buildImportGraph(root)).edges).toEqual([]);
+  });
+
   it.each([
     '{ "compilerOptions": ',
-    JSON.stringify({ extends: "./missing.json" }),
+    "[]",
+    "null",
     JSON.stringify({ extends: "./tsconfig.json" }),
+    JSON.stringify({ extends: ["./missing.json", "./tsconfig.json"] }),
   ])("reports invalid configs instead of silently dropping alias edges (%s)", async (config) => {
     const root = await checkoutWith({ "tsconfig.json": config, "main.ts": 'import "@/value";' });
     await expect(buildImportGraph(root)).rejects.toThrow("Cannot load project config");
@@ -140,6 +179,23 @@ describe("project path aliases", () => {
 });
 
 describe("project config snapshot inputs", () => {
+  it("invalidates snapshots when a missing extends target becomes available", async () => {
+    const root = await checkoutWith({
+      "tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+      "main.ts": 'import "@/value";',
+      "src/value.ts": "export {};",
+    });
+    const before = await hashMetricInputs(root);
+    expect((await buildImportGraph(root)).edges).toEqual([]);
+    await writeFile(join(root, "base.json"), JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }));
+    expect(await hashMetricInputs(root)).not.toBe(before);
+    expect((await buildImportGraph(root)).edges).toEqual([
+      { from: "main.ts", to: "src/value.ts", kind: "value" },
+    ]);
+    await rm(join(root, "base.json"));
+    expect(await hashMetricInputs(root)).toBe(before);
+  });
+
   it("invalidates snapshots after a config is added, edited, or removed", async () => {
     const root = await checkoutWith({ "src/main.ts": 'import "@/value";', "src/value.ts": "export {};" });
     const original = await hashMetricInputs(root);

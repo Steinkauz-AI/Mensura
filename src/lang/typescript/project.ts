@@ -52,8 +52,12 @@ function configHost(root: string, inputs: Map<string, string>): ts.ParseConfigFi
 function parseConfig(path: string, host: ts.ParseConfigFileHost): ts.CompilerOptions {
   const parsed = ts.getParsedCommandLineOfConfigFile(toPosix(path), {}, host);
   // Source discovery belongs to Mensura; empty TypeScript file lists are valid here.
-  const error = parsed?.errors.find((diagnostic) => ![18002, 18003].includes(diagnostic.code));
+  const errors = parsed?.errors.filter((diagnostic) => ![18002, 18003].includes(diagnostic.code)) ?? [];
+  // Uninstalled checkouts may lack extends targets (cannot read / file not found).
+  const unavailable = new Set([5083, 6053]);
+  const error = errors.find((diagnostic) => !unavailable.has(diagnostic.code));
   if (error) failConfig(error);
+  if (errors.length > 0) return {};
   return parsed?.options ?? {};
 }
 
