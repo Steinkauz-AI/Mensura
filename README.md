@@ -44,7 +44,7 @@ Product and reference docs live in [docs/](docs/): [concepts](docs/concepts.md),
 
 ## Contribute
 
-Requires Node 22+ and pnpm (pinned via `packageManager`; `corepack enable` works). Pull requests need a green CI run (`typecheck`, `test`, and `build`).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Same rules for humans and coding agents. Node 22+ and pnpm (pinned via `packageManager`; `corepack enable` works).
 
 ```bash
 pnpm install
