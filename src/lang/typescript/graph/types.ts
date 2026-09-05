@@ -18,6 +18,7 @@ export type WorkspacePackage = {
   dir: string;
   name: string;
   publicFiles: string[];
+  exports: unknown;
 };
 
 export type ImportGraph = {
