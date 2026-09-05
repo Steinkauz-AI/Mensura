@@ -6,6 +6,7 @@ import { isTestSourcePath } from "../source/test-path.js";
 import { listSourceFiles, scriptKindFor, SKIP_DIRS, toPosix } from "../source/walk.js";
 import { loadWorkspacePackages, packageDirOf } from "./packages.js";
 import { resolveSpecifier } from "./resolve.js";
+import { createAliasResolver, type AliasResolver } from "./aliases.js";
 import { specifiersInFile } from "./specifiers.js";
 import type { ImportEdge, ImportGraph, ImportNode } from "./types.js";
 
@@ -76,6 +77,7 @@ async function collectEdges(
   const edgeKey = new Set<string>();
   const edges: ImportEdge[] = [];
   const unparsed: ImportGraph["unparsed"] = [];
+  const resolveAlias = createAliasResolver(root, fileSet);
   for (const path of paths) {
     await collectFileEdges(
       root,
@@ -84,6 +86,7 @@ async function collectEdges(
       fileSet,
       packagesByName,
       packageExports,
+      resolveAlias,
       edgeKey,
       edges,
       unparsed,
@@ -99,6 +102,7 @@ async function collectFileEdges(
   fileSet: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
   packageExports: ReadonlyMap<string, unknown>,
+  resolveAlias: AliasResolver,
   edgeKey: Set<string>,
   edges: ImportEdge[],
   unparsed: ImportGraph["unparsed"],
@@ -110,7 +114,7 @@ async function collectFileEdges(
     (source as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics?.length ?? 0;
   if (parseErrorCount > 0) unparsed.push({ path, errorCount: parseErrorCount });
   for (const spec of specifiersInFile(source)) {
-    addEdge(path, spec.specifier, spec.typeOnly, fileSet, packagesByName, packageExports, edgeKey, edges);
+    addEdge(path, spec.specifier, spec.typeOnly, fileSet, packagesByName, packageExports, resolveAlias, edgeKey, edges);
   }
 }
 
@@ -121,10 +125,12 @@ function addEdge(
   fileSet: ReadonlySet<string>,
   packagesByName: ReadonlyMap<string, string>,
   packageExports: ReadonlyMap<string, unknown>,
+  resolveAlias: AliasResolver,
   edgeKey: Set<string>,
   edges: ImportEdge[],
 ): void {
-  const to = resolveSpecifier(from, specifier, fileSet, packagesByName, packageExports);
+  const to = resolveAlias(from, specifier)
+    ?? resolveSpecifier(from, specifier, fileSet, packagesByName, packageExports);
   if (!to || to === from) return;
   const kind = typeOnly ? "type" : "value";
   const key = `${from}\0${to}\0${kind}`;
