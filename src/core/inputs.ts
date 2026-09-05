@@ -8,6 +8,7 @@ import {
   pathMatchesRule,
 } from "./config/index.js";
 import { listSourceFiles, SKIP_DIRS, toPosix } from "../lang/typescript/source/walk.js";
+import { loadProjectConfigs } from "../lang/typescript/project.js";
 
 
 export async function hashMetricInputs(root: string): Promise<string> {
@@ -25,6 +26,13 @@ export async function hashMetricInputs(root: string): Promise<string> {
   const hash = createHash("sha256");
   await hashSourceFiles(hash, root, files);
   await hashConfigFiles(hash, root);
+  const projects = loadProjectConfigs(root, files.map((path) => toPosix(relative(root, path))));
+  for (const [path, text] of [...projects.inputs].sort(([a], [b]) => a.localeCompare(b))) {
+    hash.update(path);
+    hash.update("\0");
+    hash.update(text);
+    hash.update("\0");
+  }
   return hash.digest("hex");
 }
 
